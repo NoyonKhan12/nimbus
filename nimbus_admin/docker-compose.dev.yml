@@ -1,0 +1,30 @@
+# Nimbus Admin Panel - Dev environment compose
+# Run with: docker-compose -f docker-compose.dev.yml up --build
+
+name: nimbus-admin-dev
+
+services:
+  nimbus-admin-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: nimbus-admin-dev
+    ports:
+      - "${ADMIN_PORT:-3000}:3000"
+    env_file:
+      - .env.local
+    environment:
+      - NODE_ENV=development
+      - NEXT_PUBLIC_API_BASE_URL=http://nimbus-api:8080/api/v1
+    volumes:
+      - ./src:/app/src
+      - ./.next:/app/.next
+      - ./public:/app/public
+      - /app/node_modules
+    depends_on:
+      - nimbus-api
+    restart: unless-stopped
+
+  # External network alias for the API container
+  # The backend (nimbus_api) should expose its network
+  # If running standalone, you can add a network alias here

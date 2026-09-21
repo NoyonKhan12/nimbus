@@ -1,0 +1,24 @@
+# Nimbus Admin Panel - Production environment compose
+# Run with: docker-compose -f docker-compose.prod.yml up --build
+
+name: nimbus-admin-prod
+
+services:
+  nimbus-admin-prod:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+    container_name: nimbus-admin-prod
+    ports:
+      - "${ADMIN_PORT:-3000}:3000"
+    environment:
+      - NODE_ENV=production
+      - NEXT_PUBLIC_API_BASE_URL=${ADMIN_API_BASE_URL:-http://localhost:9090/api/v1}
+      - NEXT_TELEMETRY_DISABLED=1
+    restart: always
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s

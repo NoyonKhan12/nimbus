@@ -1,0 +1,17 @@
+# Nimbus Passenger App - Development build (CI/CD)
+# Runs unit tests and builds debug APK
+FROM cirrusci/flutter:3.19
+
+WORKDIR /app
+
+# Copy pubspec and get dependencies
+COPY pubspec.yaml pubspec.yaml
+COPY lib lib
+RUN flutter pub get
+
+# Run tests
+RUN flutter test
+
+# Build debug APK
+# 10.0.2.2 is the Android emulator's loopback address (maps to host's localhost)
+RUN flutter build apk --debug --dart-define=API_BASE_URL=http://10.0.2.2:9090/api/v1 --dart-define=WS_BASE_URL=ws://10.0.2.2:9090/ws

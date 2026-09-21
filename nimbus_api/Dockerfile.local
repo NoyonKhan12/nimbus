@@ -1,0 +1,10 @@
+# Nimbus API - Local development Dockerfile
+FROM eclipse-temurin:21-jdk-jammy
+
+WORKDIR /app
+
+EXPOSE 8080
+
+# Mount source and target dirs for live development.
+# Build is done externally with: ./mvnw package -DskipTests
+ENTRYPOINT ["java", "-Dspring.profiles.active=local", "-jar", "/app/target/nimbus-1.0.0-SNAPSHOT.jar"]

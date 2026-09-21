@@ -1,0 +1,222 @@
+openapi: 3.0.3
+info:
+  title: Nimbus Rideshare API
+  description: |
+    API for Nimbus - Bangladesh Commuter Ride-Pooling Platform.
+
+    ## Authentication
+    All protected endpoints require a Bearer JWT token in the Authorization header.
+    Access tokens expire in 15 minutes. Use refresh tokens to obtain new access tokens.
+
+    ## Idempotency
+    Payment and booking endpoints support idempotency via the `Idempotency-Key` header.
+
+    ## Rate Limiting
+    API is rate limited based on authenticated user or IP address.
+
+    ## WebSocket
+    Real-time updates are available via WebSocket at `/ws` using SockJS.
+    Subscribe to `/topic/ride/{rideId}` for ride-specific updates.
+  version: 1.0.0
+  contact:
+    name: Nimbus Platform Team
+
+servers:
+  - url: https://api.nimbus.com/api/v1
+    description: Production
+  - url: http://localhost:8080/api/v1
+    description: Local development
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    ApiResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          oneOf:
+            - type: object
+            - type: array
+            - type: string
+        message:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+    ErrorResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            traceId:
+              type: string
+        timestamp:
+          type: string
+          format: date-time
+    RideResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        driverId:
+          type: string
+          format: uuid
+        creatorId:
+          type: string
+          format: uuid
+        type:
+          type: string
+          enum: [SCHEDULED, INSTANT, RECURRING]
+        scheduledAt:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum: [DRAFT, PUBLISHED, ROUTE_LOCKED, DRIVER_ARRIVING, IN_PROGRESS, COMPLETED, CANCELLED]
+        originAddress:
+          type: string
+        destinationAddress:
+          type: string
+        originLatitude:
+          type: number
+          format: double
+        originLongitude:
+          type: number
+          format: double
+        destinationLatitude:
+          type: number
+          format: double
+        destinationLongitude:
+          type: number
+          format: double
+        availableSeats:
+          type: integer
+        routeVersion:
+          type: integer
+        notes:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+
+paths:
+  /auth/send-otp:
+    post:
+      summary: Send OTP for phone verification
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                phone:
+                  type: string
+                  example: "+8801712345678"
+      responses:
+        '200':
+          description: OTP sent successfully
+
+  /auth/verify-otp:
+    post:
+      summary: Verify OTP and authenticate
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                phone:
+                  type: string
+                otp:
+                  type: string
+                deviceId:
+                  type: string
+                platform:
+                  type: string
+                  enum: [ANDROID, IOS, WEB]
+      responses:
+        '200':
+          description: Authentication successful
+
+  /rides:
+    post:
+      summary: Create a new ride
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateRideRequest'
+      responses:
+        '201':
+          description: Ride created
+
+  /rides/{rideId}:
+    get:
+      summary: Get ride details
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: rideId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Ride details
+
+  /rides/search:
+    get:
+      summary: Search for rides
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: originLat
+          in: query
+          required: true
+          schema:
+            type: number
+        - name: originLng
+          in: query
+          required: true
+          schema:
+            type: number
+        - name: destLat
+          in: query
+          required: true
+          schema:
+            type: number
+        - name: destLng
+          in: query
+          required: true
+          schema:
+            type: number
+      responses:
+        '200':
+          description: List of matching rides

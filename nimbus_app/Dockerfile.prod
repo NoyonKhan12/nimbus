@@ -1,0 +1,23 @@
+# Nimbus Passenger App - Production build (CI/CD)
+# Generates release APK for deployment
+FROM cirrusci/flutter:latest AS build
+
+WORKDIR /app
+
+# Copy pubspec and get dependencies
+COPY pubspec.yaml pubspec.yaml
+COPY lib lib
+RUN flutter pub get
+
+# Build release APK
+RUN flutter build apk --release --split-per-abi
+
+# Extract APKs
+FROM alpine:latest
+RUN apk add --no-cache unzip
+COPY --from=build /app/build/app/outputs/flutter-apk/app-release/ /output/
+WORKDIR /output
+RUN for f in *.apk; do mv "$f" "nimbus-app-release.apk"; done
+
+ENTRYPOINT ["echo"]
+CMD ["APK built at /output/nimbus-app-release.apk"]

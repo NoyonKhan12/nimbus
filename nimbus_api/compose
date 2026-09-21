@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# Nimbus API compose helper
+# Automatically selects the right docker-compose file based on APP_ENV in .env.local
+#
+# Usage:
+#   ./compose up
+#   ./compose up -d
+#   ./compose down
+#   ./compose logs -f
+#   ./compose build
+#
+# The APP_ENV variable in .env.local determines which compose file is used:
+#   local  -> docker-compose.yml
+#   dev    -> docker-compose.dev.yml
+#   prod   -> docker-compose.prod.yml
+
+set -euo pipefail
+
+# Determine script directory (API project root)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+# Save externally-provided APP_ENV before loading .env files
+EXTERNAL_APP_ENV="${APP_ENV:-}"
+
+# Load .env.local if it exists (but don't override externally-set APP_ENV)
+ENV_FILE=""
+for candidate in .env.local .env; do
+    if [[ -f "$candidate" ]]; then
+        ENV_FILE="$candidate"
+        break
+    fi
+done
+
+if [[ -n "$ENV_FILE" ]]; then
+    set -o allexport
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+        if [[ "$line" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then
+            if [[ "$line" =~ ^APP_ENV= ]] && [[ -n "$EXTERNAL_APP_ENV" ]]; then
+                continue
+            fi
+            export "$line"
+        fi
+    done < "$ENV_FILE"
+    set +o allexport
+fi
+
+# Default to local if APP_ENV is not set
+APP_ENV="${APP_ENV:-local}"
+
+# Select the appropriate compose file
+case "$APP_ENV" in
+    local)
+        COMPOSE_FILE="docker-compose.yml"
+        ;;
+    dev)
+        COMPOSE_FILE="docker-compose.dev.yml"
+        ;;
+    prod)
+        COMPOSE_FILE="docker-compose.prod.yml"
+        ;;
+    *)
+        echo "Error: Unknown APP_ENV '$APP_ENV'. Valid values: local, dev, prod" >&2
+        exit 1
+        ;;
+esac
+
+echo "Nimbus API - Using APP_ENV=$APP_ENV -> $COMPOSE_FILE"
+
+# Execute docker compose with the selected file
+exec docker compose -f "$COMPOSE_FILE" "$@"

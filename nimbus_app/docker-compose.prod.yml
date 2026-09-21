@@ -1,0 +1,13 @@
+# Nimbus Passenger App - Production build container
+# Run: docker compose -f docker-compose.prod.yml up --build
+
+name: nimbus-app-build-prod
+
+services:
+  app-builder-prod:
+    container_name: nimbus-app-builder
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+    volumes:
+      - ./apk-output:/output

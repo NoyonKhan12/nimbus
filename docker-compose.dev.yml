@@ -1,0 +1,75 @@
+# Development compose
+# Containerized services on internal Docker network.
+# API on port 8080, connects to services by name.
+services:
+  postgres:
+    container_name: nimbus-postgres
+    image: postgis/postgis:15-3.3
+    environment:
+      POSTGRES_DB: nimbus
+      POSTGRES_USER: nimbus
+      POSTGRES_PASSWORD: nimbus_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata_dev:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nimbus -d nimbus"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    container_name: nimbus-redis
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - redisdata_dev:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    container_name: nimbus-api
+    build:
+      context: ./nimbus_api
+      dockerfile: Dockerfile.dev
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/nimbus
+      - SPRING_DATASOURCE_USERNAME=nimbus
+      - SPRING_DATASOURCE_PASSWORD=nimbus_password
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PORT=6379
+      - SPRING_PROFILES_ACTIVE=dev
+      - JWT_SECRET=bmltYnVzLWRldi1zZWNyZXQta2V5LWNoYW5nZS1pbi1wcm9kdWN0aW9u
+    ports:
+      - "8080:8080"
+
+  admin:
+    container_name: nimbus-admin-dev
+    build:
+      context: ./nimbus_admin
+      dockerfile: Dockerfile.dev
+    depends_on:
+      - api
+    environment:
+      - NEXT_PUBLIC_API_BASE_URL=http://nimbus-api:8080/api/v1
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./nimbus_admin/src:/app/src
+      - ./nimbus_admin/.next:/app/.next
+      - ./nimbus_admin/public:/app/public
+
+volumes:
+  pgdata_dev:
+  redisdata_dev:

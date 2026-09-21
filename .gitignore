@@ -1,0 +1,53 @@
+# Maven
+target/
+.mvn/wrapper/
+.mvn/
+mvnw
+mvnw.cmd
+.Maven/
+
+# IDE
+.idea/
+.vscode/
+*.iws
+*.iml
+*.ipr
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Logs
+logs/
+*.log
+
+# Temp files
+tmp/
+*.tmp
+.classpath
+.project
+.settings/
+.c9/
+
+# Database
+*.db
+*.sqlite
+
+# Docker
+*.pid
+docker-compose.override.yml
+
+# Coverage
+.coverage/
+.coverage.*
+.cache/
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/

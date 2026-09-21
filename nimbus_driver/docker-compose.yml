@@ -1,0 +1,15 @@
+# Nimbus Driver App - Build container
+# Generates APK for testing or deployment
+
+name: nimbus-driver-build
+
+services:
+  driver-builder:
+    container_name: nimbus-driver-builder
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    volumes:
+      - ./build:/app/build
+      - ./lib:/app/lib
+    command: flutter build apk --debug

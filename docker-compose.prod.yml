@@ -1,0 +1,76 @@
+# Production compose
+# All secrets and hostnames provided via environment at runtime.
+# Does not expose DB/Redis ports externally (managed externally or by infra).
+services:
+  postgres:
+    container_name: nimbus-postgres
+    image: postgis/postgis:15-3.3
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-nimbus_prod}
+      POSTGRES_USER: ${POSTGRES_USER:-nimbus}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata_prod:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-nimbus} -d ${POSTGRES_DB:-nimbus_prod}"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    container_name: nimbus-redis
+    image: redis:7-alpine
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD}
+    volumes:
+      - redisdata_prod:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a ${REDIS_PASSWORD} ping | grep PONG"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+    restart: unless-stopped
+
+  api:
+    container_name: nimbus-api
+    build:
+      context: ./nimbus_api
+      dockerfile: Dockerfile.prod
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-nimbus_prod}
+      - SPRING_DATASOURCE_USERNAME=${POSTGRES_USER:-nimbus}
+      - SPRING_DATASOURCE_PASSWORD=${POSTGRES_PASSWORD}
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PORT=${REDIS_PORT:-6379}
+      - SPRING_PROFILES_ACTIVE=prod
+      - JWT_SECRET=${JWT_SECRET}
+    ports:
+      - "${APP_PORT:-8080}:8080"
+    restart: unless-stopped
+
+  admin:
+    container_name: nimbus-admin-prod
+    build:
+      context: ./nimbus_admin
+      dockerfile: Dockerfile.prod
+    depends_on:
+      - api
+    environment:
+      - NEXT_PUBLIC_API_BASE_URL=${ADMIN_API_BASE_URL:-http://localhost:8080/api/v1}
+      - NODE_ENV=production
+    ports:
+      - "${ADMIN_PORT:-3000}:3000"
+    restart: unless-stopped
+
+volumes:
+  pgdata_prod:
+  redisdata_prod:

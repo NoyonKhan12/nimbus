@@ -1,0 +1,24 @@
+# Nimbus Admin Panel - Local compose
+# Run with: docker-compose up --build
+# Or: ./compose up (from nimbus root)
+
+name: nimbus-admin
+
+services:
+  nimbus-admin:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: nimbus-admin
+    ports:
+      - "${ADMIN_PORT:-3000}:3000"
+    env_file:
+      - .env.local
+    environment:
+      - NODE_ENV=development
+      - NEXT_PUBLIC_API_BASE_URL=http://host.docker.internal:9090/api/v1
+    volumes:
+      - ./src:/app/src
+      - ./.next:/app/.next
+      - ./public:/app/public
+    restart: unless-stopped

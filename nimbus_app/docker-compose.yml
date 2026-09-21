@@ -1,0 +1,16 @@
+# Nimbus Passenger App - Build container
+# Generates APK for testing or deployment
+# Run: docker compose up --build
+
+name: nimbus-app-build
+
+services:
+  app-builder:
+    container_name: nimbus-app-builder
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    volumes:
+      - ./build:/app/build
+      - ./lib:/app/lib
+    command: flutter build apk --debug

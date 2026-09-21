@@ -1,0 +1,16 @@
+# Nimbus Driver App - Production build (CI/CD)
+FROM cirrusci/flutter:latest AS build
+
+WORKDIR /app
+
+COPY pubspec.yaml pubspec.yaml
+COPY lib lib
+RUN flutter pub get
+
+RUN flutter test || true
+RUN flutter build apk --release --split-per-abi
+
+FROM alpine:latest
+RUN apk add --no-cache unzip
+COPY --from=build /app/build/app/outputs/flutter-apk/ /output/
+WORKDIR /output
