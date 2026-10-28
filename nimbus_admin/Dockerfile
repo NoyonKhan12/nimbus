@@ -10,6 +10,10 @@ RUN npm install
 # Copy source
 COPY . .
 
+# Public API base URL is inlined into the client bundle at build time.
+ARG NEXT_PUBLIC_API_BASE_URL
+ENV NEXT_PUBLIC_API_BASE_URL=$NEXT_PUBLIC_API_BASE_URL
+
 # Build
 RUN npm run build
 

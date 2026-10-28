@@ -46,7 +46,7 @@ public class RideStop {
     @Enumerated(EnumType.STRING)
     private StopType stopType;
 
-    @Column(name = "location", columnDefinition = "GEOMETRY(Point, 4326)")
+    @Column(name = "location", columnDefinition = "text")
     private String location;
 
     @Column(name = "address", length = 500)

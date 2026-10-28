@@ -73,3 +73,11 @@
 .status-suspended {
   @apply bg-red-100 text-red-800;
 }
+
+.status-neutral {
+  @apply bg-gray-100 text-gray-800;
+}
+
+.status-info {
+  @apply bg-indigo-100 text-indigo-800;
+}

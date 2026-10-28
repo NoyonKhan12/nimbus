@@ -97,8 +97,47 @@ public class VoucherService {
     /**
      * Record a voucher redemption after successful validation.
      */
-    @Transactional
+    /**
+     * Voucher discount for fare quoting — never throws and never marks the
+     * caller's transaction rollback-only (REQUIRES_NEW): an invalid voucher
+     * simply discounts nothing.
+     *
+     * @return the discount amount, or empty when the voucher is invalid.
+     */
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
+    public java.util.Optional<java.math.BigDecimal> quietDiscount(UUID userId, String code, BigDecimal fare) {
+        try {
+            VoucherValidateRequest req = VoucherValidateRequest.builder()
+                    .code(code)
+                    .userId(userId)
+                    .fare(fare)
+                    .build();
+            VoucherValidateResponse res = validateVoucher(userId, req);
+            return java.util.Optional.ofNullable(res.getDiscountAmount())
+                    .filter(d -> d.signum() > 0);
+        } catch (Exception e) {
+            return java.util.Optional.empty();
+        }
+    }
+
     public void recordRedemption(UUID userId, String code, BigDecimal fare, BigDecimal discount) {
+        recordRedemption(userId, code, fare, discount, null);
+    }
+
+    /**
+     * Record a redemption bound to a booking. Called from the booking
+     * transaction at confirm time so usage/per-user limits become real.
+     * The (voucher, booking, REDEEMED) unique index makes this idempotent —
+     * a re-confirm after retry does not double-count.
+     */
+    public void recordRedemption(UUID userId, String code, BigDecimal fare,
+                                 BigDecimal discount, UUID bookingId) {
+        if (code == null || code.isBlank() || discount == null || discount.signum() <= 0) {
+            return;
+        }
+        if (bookingId != null && !redemptionRepository.findByBookingId(bookingId).isEmpty()) {
+            return; // already redeemed for this booking
+        }
         Voucher voucher = voucherRepository.findByCode(code)
                 .orElseThrow(() -> new NimbusException(ErrorCode.VOUCHER_NOT_FOUND, HttpStatus.NOT_FOUND));
 
@@ -108,11 +147,29 @@ public class VoucherService {
         VoucherRedemption redemption = VoucherRedemption.builder()
                 .voucher(voucher)
                 .user(user)
+                .booking(bookingId != null
+                        ? com.nimbus.booking.domain.entity.Booking.builder().id(bookingId).build()
+                        : null)
                 .fareAmount(fare)
                 .discountAmount(discount)
                 .createdAt(Instant.now())
                 .build();
         redemptionRepository.save(redemption);
+    }
+
+    /**
+     * Reverse the redemption tied to a cancelled booking. The discount
+     * history stays immutable (status flips to REVERSED); the freed
+     * booking link means the voucher can be applied to a future booking.
+     */
+    @Transactional
+    public void reverseRedemptionForBooking(UUID bookingId) {
+        redemptionRepository.findByBookingId(bookingId).stream()
+                .filter(r -> r.getStatus() == VoucherRedemption.RedemptionStatus.REDEEMED)
+                .forEach(r -> {
+                    r.setStatus(VoucherRedemption.RedemptionStatus.REVERSED);
+                    redemptionRepository.save(r);
+                });
     }
 
     /**

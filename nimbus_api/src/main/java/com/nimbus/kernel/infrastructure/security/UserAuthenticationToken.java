@@ -24,30 +24,33 @@ public class UserAuthenticationToken extends AbstractAuthenticationToken {
 
     private static Collection<GrantedAuthority> getAuthorities(User user) {
         List<GrantedAuthority> authorities = new ArrayList<>();
-        // Add role-based authority
-        authorities.add(new SimpleGrantedAuthority("ROLE_" + user.getRole().name()));
+        // Add role-based authority (dynamic role name)
+        authorities.add(new SimpleGrantedAuthority("ROLE_" + user.getRole()));
 
         // Add scope-based authorities for fine-grained access
         switch (user.getRole()) {
-            case ADMIN:
+            case "ADMIN":
                 authorities.add(new SimpleGrantedAuthority("PERMISSION_ALL"));
                 break;
-            case DRIVER:
+            case "DRIVER":
                 authorities.add(new SimpleGrantedAuthority("PERMISSION_CREATE_RIDE"));
                 authorities.add(new SimpleGrantedAuthority("PERMISSION_VIEW_WALLET"));
                 break;
-            case OPERATIONS:
+            case "OPERATIONS":
                 authorities.add(new SimpleGrantedAuthority("PERMISSION_MANAGE_RIDES"));
                 break;
-            case FINANCE:
+            case "FINANCE":
                 authorities.add(new SimpleGrantedAuthority("PERMISSION_MANAGE_SETTLEMENTS"));
                 authorities.add(new SimpleGrantedAuthority("PERMISSION_VIEW_PAYMENTS"));
                 break;
-            case SUPPORT:
+            case "SUPPORT":
                 authorities.add(new SimpleGrantedAuthority("PERMISSION_HANDLE_COMPLAINTS"));
                 break;
-            case SAFETY:
+            case "SAFETY":
                 authorities.add(new SimpleGrantedAuthority("PERMISSION_HANDLE_SOS"));
+                break;
+            default:
+                // Custom roles get the ROLE_ authority only
                 break;
         }
 

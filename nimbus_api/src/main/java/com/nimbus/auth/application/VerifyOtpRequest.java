@@ -22,4 +22,5 @@ public class VerifyOtpRequest {
     private String deviceId;
     private String platform;
     private String pushToken;
+    private String appVersion;
 }

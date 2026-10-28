@@ -34,6 +34,10 @@ tmp/
 .settings/
 .c9/
 
+# Uploaded profile photos / driver documents (never commit user data)
+nimbus_api/data/uploads/
+nimbus_api/data/
+
 # Database
 *.db
 *.sqlite

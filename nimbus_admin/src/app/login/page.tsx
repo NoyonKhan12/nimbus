@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useForm } from 'react-hook-form';
-import { FiLogIn, FiMail, FiLock, FiAlertCircle, FiShield } from 'react-icons/fi';
+import { FiLogIn, FiMail, FiLock, FiAlertCircle } from 'react-icons/fi';
 import { useAuth } from '@/hooks/useAuth';
 import { AdminLoginRequest } from '@/types';
 import { getStoredEmail, checkAuth } from '@/services/auth';
@@ -66,7 +66,9 @@ export default function LoginPage() {
       <div className="max-w-md w-full bg-white rounded-xl shadow-lg p-8">
         <div className="text-center mb-6">
           <div className="flex items-center justify-center gap-2 mb-2">
-            <FiShield className="text-indigo-600 text-3xl" />
+            {/* Brand mark from the Nimbus exact-fidelity asset kit */}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/nimbus-mark.svg" alt="Nimbus mark" className="w-9 h-9" />
             <h1 className="text-3xl font-bold text-indigo-700">Nimbus Admin</h1>
           </div>
           <p className="text-sm text-gray-500 mt-1">

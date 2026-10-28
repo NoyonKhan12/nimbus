@@ -4,6 +4,7 @@ import com.nimbus.booking.domain.entity.Booking;
 import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -48,6 +49,15 @@ public interface BookingRepository extends JpaRepository<Booking, UUID> {
     /**
      * Sum of seats allocated to active bookings for a ride.
      */
+    /**
+     * Bulk-expires HELD bookings older than the cutoff (seat holds last
+     * 5 minutes — guide §5/§25). Returns the number expired.
+     */
+    @Modifying
+    @Query(value = "UPDATE bookings SET status = 'EXPIRED', updated_at = now() "
+           + "WHERE status = 'HELD' AND created_at < :cutoff", nativeQuery = true)
+    int expireStaleHolds(@Param("cutoff") java.time.Instant cutoff);
+
     @Query("SELECT COALESCE(SUM(b.seats), 0) FROM Booking b WHERE b.ride.id = :rideId " +
            "AND b.status IN (HELD, CONFIRMED, PICKED_UP)")
     int sumActiveSeatsByRideId(@Param("rideId") UUID rideId);

@@ -14,7 +14,7 @@ public class UserResponse {
     private String phone;
     private String email;
     private User.UserStatus status;
-    private User.UserRole role;
+    private String role;
     private boolean phoneVerified;
     private UserProfileResponse profile;
 

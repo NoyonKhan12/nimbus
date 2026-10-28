@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../bloc/auth/auth_bloc.dart';
-import '../../core/theme/app_theme.dart';
+import '../../widgets/brand.dart';
 
 /// SplashPage — checks auth state and redirects accordingly.
 /// Shows the Nimbus logo while determining if the user is authenticated.
@@ -23,8 +23,9 @@ class _SplashPageState extends State<SplashPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppTheme.primary,
-      body: BlocListener<AuthBloc, AuthState>(
+      body: Container(
+        decoration: const BoxDecoration(gradient: BrandGradients.hero),
+        child: BlocListener<AuthBloc, AuthState>(
         listener: (context, state) {
           if (state is AuthAuthenticated) {
             Navigator.of(context).pushReplacementNamed('/home');
@@ -32,8 +33,9 @@ class _SplashPageState extends State<SplashPage> {
             Navigator.of(context).pushReplacementNamed('/auth');
           }
         },
-        child: Center(
-          child: _SplashContent(),
+          child: Center(
+            child: _SplashContent(),
+          ),
         ),
       ),
     );
@@ -46,40 +48,65 @@ class _SplashContent extends StatelessWidget {
     return Column(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        // Logo
+        // Logo — glass ring with brand glow.
         Container(
-          width: 120,
-          height: 120,
+          width: 148,
+          height: 148,
           decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.15),
             shape: BoxShape.circle,
+            gradient: RadialGradient(
+              colors: BrandGradients.glow,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFF4DB6AC).withOpacity(0.45),
+                blurRadius: 40,
+                spreadRadius: 6,
+              ),
+            ],
           ),
-          child: const Icon(
-            Icons.electric_rickshaw,
-            size: 60,
-            color: Colors.white,
+          padding: const EdgeInsets.all(6),
+          child: Container(
+            decoration: const BoxDecoration(
+              shape: BoxShape.circle,
+              color: Colors.white,
+            ),
+            padding: const EdgeInsets.all(10),
+            child: ClipOval(
+              child: Image.asset(
+                'assets/images/nimbus_logo.png',
+                fit: BoxFit.cover,
+              ),
+            ),
           ),
         ),
-        const SizedBox(height: 24),
+        const SizedBox(height: 28),
         const Text(
           'Nimbus',
           style: TextStyle(
-            fontSize: 36,
-            fontWeight: FontWeight.bold,
+            fontSize: 40,
+            fontWeight: FontWeight.w800,
             color: Colors.white,
+            letterSpacing: 1.2,
           ),
         ),
         const SizedBox(height: 8),
-        const Text(
-          'Bangladesh Commuter Ride-Pooling',
+        Text(
+          'Share the ride. Split the fare.',
           style: TextStyle(
-            fontSize: 14,
-            color: Colors.white70,
+            fontSize: 15,
+            color: Colors.white.withOpacity(0.75),
+            letterSpacing: 0.3,
           ),
         ),
-        const SizedBox(height: 32),
-        const CircularProgressIndicator(
-          valueColor: AlwaysStoppedAnimation<Color>(Colors.white70),
+        const SizedBox(height: 40),
+        const SizedBox(
+          width: 26,
+          height: 26,
+          child: CircularProgressIndicator(
+            strokeWidth: 2.4,
+            valueColor: AlwaysStoppedAnimation<Color>(Colors.white70),
+          ),
         ),
       ],
     );

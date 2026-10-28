@@ -22,6 +22,14 @@ import java.util.stream.Collectors;
 @Slf4j
 public class GlobalExceptionHandler {
 
+    @ExceptionHandler(java.lang.SecurityException.class)
+    public ResponseEntity<ErrorResponse> handleSecurityException(java.lang.SecurityException ex) {
+        // Webhook signature failures and other verification failures must
+        // return 401, not a 500 that would trigger provider retry storms.
+        return buildErrorResponse(com.nimbus.kernel.domain.ErrorCode.AUTH_UNAUTHORIZED,
+                ex.getMessage(), org.springframework.http.HttpStatus.UNAUTHORIZED);
+    }
+
     @ExceptionHandler(NimbusException.class)
     public ResponseEntity<ErrorResponse> handleNimbusException(NimbusException ex) {
         return buildErrorResponse(ex.getErrorCode(), ex.getMessage(), ex.getHttpStatus());
@@ -39,6 +47,22 @@ public class GlobalExceptionHandler {
                 "Validation failed: " + String.join(", ", errors),
                 HttpStatus.BAD_REQUEST
         );
+    }
+
+    /** Malformed enum values / non-numeric params must be 400, not 500. */
+    @ExceptionHandler(org.springframework.web.method.annotation.MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<ErrorResponse> handleTypeMismatch(
+            org.springframework.web.method.annotation.MethodArgumentTypeMismatchException ex) {
+        return buildErrorResponse(ErrorCode.VALIDATION_ERROR,
+                "Invalid value '" + ex.getValue() + "' for parameter '" + ex.getName() + "'",
+                HttpStatus.BAD_REQUEST);
+    }
+
+    @ExceptionHandler(org.springframework.web.bind.MissingServletRequestParameterException.class)
+    public ResponseEntity<ErrorResponse> handleMissingParameter(
+            org.springframework.web.bind.MissingServletRequestParameterException ex) {
+        return buildErrorResponse(ErrorCode.VALIDATION_ERROR,
+                ex.getParameterName() + " is required", HttpStatus.BAD_REQUEST);
     }
 
     @ExceptionHandler(AuthenticationException.class)

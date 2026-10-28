@@ -1,17 +1,18 @@
-import 'package:freezed_annotation/freezed_annotation.dart';
+/// A geographic point with an optional human-readable label.
+class LocationDto {
+  final double latitude;
+  final double longitude;
+  final String? address;
 
-part 'location_dto.freezed.dart';
-part 'location_dto.g.dart';
+  const LocationDto({
+    required this.latitude,
+    required this.longitude,
+    this.address,
+  });
 
-/// Location DTO matching the backend contract.
-@freezed
-class LocationDto with _$LocationDto {
-  const factory LocationDto({
-    required double latitude,
-    required double longitude,
-    String? address,
-  }) = _LocationDto;
-
-  factory LocationDto.fromJson(Map<String, dynamic> json) =>
-      _$LocationDtoFromJson(json);
+  factory LocationDto.fromJson(Map<String, dynamic> json) => LocationDto(
+        latitude: (json['latitude'] as num?)?.toDouble() ?? 0,
+        longitude: (json['longitude'] as num?)?.toDouble() ?? 0,
+        address: json['address']?.toString(),
+      );
 }

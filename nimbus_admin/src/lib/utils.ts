@@ -4,7 +4,9 @@
 export const formatDate = (dateStr: string | undefined): string => {
   if (!dateStr) return '-';
   try {
-    return new Date(dateStr).toLocaleDateString('en-US', {
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return dateStr;
+    return d.toLocaleDateString('en-US', {
       year: 'numeric',
       month: 'short',
       day: 'numeric',
@@ -20,7 +22,9 @@ export const formatDate = (dateStr: string | undefined): string => {
 export const formatDateTime = (dateStr: string | undefined): string => {
   if (!dateStr) return '-';
   try {
-    return new Date(dateStr).toLocaleString('en-US', {
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return dateStr;
+    return d.toLocaleString('en-US', {
       year: 'numeric',
       month: 'short',
       day: 'numeric',
@@ -41,6 +45,19 @@ export const formatCurrency = (amount: number | undefined): string => {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`;
+};
+
+/**
+ * Format a ride pickup/drop-off: prefer the address; when missing, fall back
+ * to readable coordinates extracted from the WKT POINT string.
+ */
+export const formatPlace = (address: string | null | undefined, wkt?: string | null): string => {
+  if (address) return address;
+  if (!wkt) return '-';
+  // "POINT(90.4126 23.8104)" -> "(23.8104, 90.4126)" (lat, lng order for humans)
+  const m = wkt.match(/POINT\s*\(\s*(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s*\)/i);
+  if (m) return `(${m[2]}, ${m[1]})`;
+  return wkt;
 };
 
 /**
@@ -68,6 +85,46 @@ export const getStatusLabel = (status: string | undefined): string => {
       .split('_')
       .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
       .join(' ');
+};
+
+/**
+ * Map an enum-ish table value (status / role / category / method) to the
+ * shared pill-badge CSS class used in every dashboard table
+ * (same pill style as the Rides table status column).
+ */
+export const getBadgeClass = (value: string | undefined | null): string => {
+  const v = (value ?? '').toUpperCase();
+
+  // Roles
+  if (v === 'ADMIN') return 'status-info';
+
+  // Positive / happy states
+  if (v === 'ACTIVE' || v === 'COMPLETED' || v === 'APPROVED' || v === 'PAID' ||
+      v === 'RESOLVED' || v === 'SUCCEEDED' || v === 'DRIVER') {
+    return 'status-active';
+  }
+
+  // In-flight / attention states
+  if (v === 'PENDING' || v === 'IN_PROGRESS' || v === 'PROCESSING' ||
+      v === 'REQUESTED' || v === 'INCOMING' || v === 'EN_ROUTE' ||
+      v === 'DISPATCHING' || v === 'ARRIVED' || v === 'OPEN' ||
+      v === 'DRIVER_BEHAVIOR' || v === 'DELAY' || v === 'ONLINE' ||
+      v === 'AWAY') {
+    return 'status-pending';
+  }
+  if (v === 'DRIVING') return 'status-active';
+
+  // Negative states
+  if (v === 'CANCELLED' || v === 'CANCELED' || v === 'FAILED' ||
+      v === 'REJECTED' || v === 'ESCALATED' || v === 'SAFETY' ||
+      v === 'OVERCHARGING') {
+    return 'status-cancelled';
+  }
+
+  if (v === 'SUSPENDED' || v === 'SOS') return 'status-suspended';
+
+  // Everything else (roles like PASSENGER, methods like CASH, vehicle types)
+  return 'status-neutral';
 };
 
 /**

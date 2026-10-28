@@ -9,4 +9,6 @@ import java.util.*;
 @Repository
 public interface PaymentTransactionRepository extends JpaRepository<PaymentTransaction, UUID> {
     List<PaymentTransaction> findByPaymentId(UUID paymentId);
+
+    boolean existsByProviderAndProviderEventRef(String provider, String providerEventRef);
 }

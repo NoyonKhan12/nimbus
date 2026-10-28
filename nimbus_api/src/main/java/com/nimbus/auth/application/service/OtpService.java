@@ -35,11 +35,11 @@ public class OtpService {
     }
 
     private String otpKey(String phone) {
-        return "nimbus:otp:" + phone;
+        return "otp:" + phone;
     }
 
     private String attemptsKey(String phone) {
-        return "nimbus:otp:attempts:" + phone;
+        return "otp:attempts:" + phone;
     }
 
     /**
@@ -107,7 +107,7 @@ public class OtpService {
      * Returns the current count.
      */
     public long incrementRateLimit(String phone) {
-        String key = "nimbus:otp:rate:" + phone;
+        String key = "otp:rate:" + phone;
         Long count = redisTemplate.opsForValue().increment(key, 1);
         if (count != null && count == 1) {
             redisTemplate.expire(key, Duration.ofMinutes(15));
@@ -119,7 +119,7 @@ public class OtpService {
      * Check if the phone has exceeded OTP request rate limit.
      */
     public boolean isRateLimited(String phone) {
-        String key = "nimbus:otp:rate:" + phone;
+        String key = "otp:rate:" + phone;
         String countStr = redisTemplate.opsForValue().get(key);
         int count = countStr != null ? Integer.parseInt(countStr) : 0;
         return count >= rateLimitPer15Min;

@@ -1,6 +1,9 @@
 package com.nimbus.kernel.infrastructure.config;
 
+import com.nimbus.kernel.domain.repository.RoleRepository;
 import com.nimbus.kernel.infrastructure.security.JwtAuthenticationFilter;
+import com.nimbus.kernel.infrastructure.security.StaffAuthorizationManager;
+import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.context.annotation.*;
 import org.springframework.security.authentication.*;
 import org.springframework.security.config.annotation.web.builders.*;
@@ -18,12 +21,16 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
  */
 @Configuration
 @EnableWebSecurity
+@org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity
 public class SecurityConfig {
 
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
+    private final StaffAuthorizationManager staffAuthorizationManager;
 
-    public SecurityConfig(JwtAuthenticationFilter jwtAuthenticationFilter) {
+    public SecurityConfig(JwtAuthenticationFilter jwtAuthenticationFilter,
+                          RoleRepository roleRepository) {
         this.jwtAuthenticationFilter = jwtAuthenticationFilter;
+        this.staffAuthorizationManager = new StaffAuthorizationManager(roleRepository);
     }
 
     @Bean
@@ -34,17 +41,34 @@ public class SecurityConfig {
                 session.sessionCreationPolicy(SessionCreationPolicy.STATELESS)
             )
             .authorizeHttpRequests(auth -> auth
-                // Public endpoints
+                // Public endpoints. Note /auth/logout and /auth/sessions are
+                // intentionally NOT public — they fall through to the
+                // catch-all and require authentication (guide §18).
                 .requestMatchers(
-                    "/auth/**",
+                    "/auth/send-otp",
+                    "/auth/verify-otp",
+                    "/auth/refresh",
                     "/admin/auth/**",
                     "/v3/api-docs/**",
                     "/swagger-ui.html",
                     "/swagger-ui/**",
                     "/actuator/health",
                     "/actuator/info",
-                    "/ws/**"
+                    "/ws/**",
+                    // Public profile-photo objects (guide §15 /me/photo).
+                    // NOTE: /uploads/documents/** is NOT public — driver
+                    // documents are private (V15) and served only through
+                    // the ownership-checked document endpoints below.
+                    "/uploads/profile/**",
+                    // Trip-share links are capability-token based (guide §19).
+                    "/safety/share/*",
+                    // Payment provider callbacks authenticate via provider
+                    // signatures, not JWTs (guide §12).
+                    "/payments/webhooks/**"
                 ).permitAll()
+
+                // Private document objects must never be served statically.
+                .requestMatchers("/uploads/documents/**").denyAll()
 
                 // Protected endpoints
                 .requestMatchers(
@@ -61,16 +85,34 @@ public class SecurityConfig {
                     "/notifications/**"
                 ).authenticated()
 
-                // Admin-only endpoints
+                // Staff portal endpoints — any staff role (dynamic), not app users
                 .requestMatchers(
                     "/admin/**",
                     "/internal/**"
-                ).hasRole("ADMIN")
+                ).access(staffAuthorizationManager)
 
                 .anyRequest().authenticated()
             )
             .httpBasic(AbstractHttpConfigurer::disable)
             .formLogin(AbstractHttpConfigurer::disable)
+            .exceptionHandling(ex -> ex
+                .authenticationEntryPoint((request, response, authException) -> {
+                    // Missing/invalid token must be 401 (not 403) so clients can
+                    // distinguish "refresh your token" from "not allowed".
+                    response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+                    response.setContentType("application/json");
+                    response.getWriter().write(
+                            "{\"success\":false,\"error\":{\"code\":\"UNAUTHORIZED\","
+                            + "\"message\":\"Authentication required\"}}");
+                })
+                .accessDeniedHandler((request, response, accessDeniedException) -> {
+                    // Authenticated but the staff role lacks the capability.
+                    response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+                    response.setContentType("application/json");
+                    response.getWriter().write(
+                            "{\"success\":false,\"error\":{\"code\":\"FORBIDDEN\","
+                            + "\"message\":\"You do not have permission for this action\"}}");
+                }))
             .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();

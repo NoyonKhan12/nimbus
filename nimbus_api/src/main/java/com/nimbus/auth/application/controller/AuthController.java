@@ -1,12 +1,20 @@
 package com.nimbus.auth.application.controller;
 
 import com.nimbus.kernel.application.dto.ApiResponse;
+import com.nimbus.kernel.domain.ErrorCode;
+import com.nimbus.kernel.domain.exception.NimbusException;
+import com.nimbus.kernel.infrastructure.security.UserAuthenticationToken;
 import com.nimbus.auth.application.*;
 import com.nimbus.auth.application.service.AuthService;
+import com.nimbus.auth.application.service.RefreshSessionService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.*;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
+import java.util.UUID;
 
 /**
  * Authentication controller handling OTP send/verify, token refresh, and logout.
@@ -67,15 +75,20 @@ public class AuthController {
     }
 
     /**
-     * Logout the current user (revoke tokens).
+     * Logout the current user by revoking their refresh session. Accepts an
+     * optional refresh token (revokes that session) — when omitted but the
+     * caller is authenticated, every session of the user is revoked.
      */
     @PostMapping("/logout")
-    public ResponseEntity<ApiResponse<Void>> logout() {
-        // Frontend should delete the tokens, backend doesn't need to do anything
-        // because JWTs are stateless until refresh token revocation
+    public ResponseEntity<ApiResponse<Void>> logout(
+            @RequestBody(required = false) RefreshTokenRequest request) {
+        UUID userId = currentUserIdOrNull();
+        int revoked = authService.logout(request != null ? request.getRefreshToken() : null, userId);
         return ResponseEntity.ok(ApiResponse.<Void>builder()
                 .success(true)
-                .message("Logged out successfully")
+                .message(revoked > 0
+                        ? "Logged out successfully (" + revoked + " session" + (revoked == 1 ? "" : "s") + " revoked)"
+                        : "Logged out successfully")
                 .timestamp(java.time.Instant.now().toString())
                 .build());
     }
@@ -84,12 +97,46 @@ public class AuthController {
      * List active sessions for the current user.
      */
     @GetMapping("/sessions")
-    public ResponseEntity<ApiResponse<Void>> listSessions() {
-        // TODO: Implement session tracking
-        return ResponseEntity.ok(ApiResponse.<Void>builder()
+    public ResponseEntity<ApiResponse<List<RefreshSessionService.SessionInfo>>> listSessions() {
+        UUID userId = currentUserIdOrNull();
+        if (userId == null) {
+            throw new NimbusException(ErrorCode.AUTH_UNAUTHORIZED, HttpStatus.UNAUTHORIZED);
+        }
+        List<RefreshSessionService.SessionInfo> sessions = authService.listSessions(userId);
+        return ResponseEntity.ok(ApiResponse.<List<RefreshSessionService.SessionInfo>>builder()
                 .success(true)
-                .message("Sessions retrieved")
+                .data(sessions)
                 .timestamp(java.time.Instant.now().toString())
                 .build());
+    }
+
+    /**
+     * Revoke one of the current user's sessions.
+     */
+    @DeleteMapping("/sessions/{sessionId}")
+    public ResponseEntity<ApiResponse<Void>> revokeSession(@PathVariable String sessionId) {
+        UUID userId = currentUserIdOrNull();
+        if (userId == null) {
+            throw new NimbusException(ErrorCode.AUTH_UNAUTHORIZED, HttpStatus.UNAUTHORIZED);
+        }
+        boolean revoked = authService.revokeSession(userId, sessionId);
+        if (!revoked) {
+            throw new NimbusException(ErrorCode.AUTH_UNAUTHORIZED,
+                    "Session not found or not owned by you", HttpStatus.NOT_FOUND);
+        }
+        return ResponseEntity.ok(ApiResponse.<Void>builder()
+                .success(true)
+                .message("Session revoked")
+                .timestamp(java.time.Instant.now().toString())
+                .build());
+    }
+
+    /** Resolves the authenticated user id, or null for anonymous callers. */
+    private UUID currentUserIdOrNull() {
+        var auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth instanceof UserAuthenticationToken userAuth) {
+            return userAuth.getUserId();
+        }
+        return null;
     }
 }

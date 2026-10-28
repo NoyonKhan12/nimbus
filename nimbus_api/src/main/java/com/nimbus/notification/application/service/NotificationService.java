@@ -13,6 +13,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
@@ -37,11 +38,20 @@ public class NotificationService {
     /**
      * Send a notification to a user.
      */
-    @Transactional
+    // NESTED uses a savepoint: a notification failure rolls back only the
+    // notification, never the payment/booking transaction that called it.
+    // Notifications are best-effort and must not undo a financial commit.
+    @Transactional(propagation = Propagation.NESTED)
     public NotificationResponse sendNotification(UUID userId, Notification.NotificationType type,
                                                   String title, String body, Map<String, Object> data) {
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new NimbusException(ErrorCode.USER_NOT_FOUND, HttpStatus.NOT_FOUND));
+        Optional<User> recipient = userRepository.findById(userId);
+        if (recipient.isEmpty()) {
+            // A soft-deleted/missing recipient is not an error for the
+            // caller; skip delivery and keep the business transaction intact.
+            log.warn("Skipping notification {} for missing user {}", type, userId);
+            return null;
+        }
+        User user = recipient.get();
 
         Notification notification = Notification.builder()
                 .user(user)
@@ -119,16 +129,48 @@ public class NotificationService {
                 default -> delivery.setChannel(NotificationDelivery.DeliveryChannel.IN_APP);
             }
 
-            // In production, integrate with FCM/APNs, SMS providers
-            log.info("Dispatching notification: {} channel: {}", notification.getId(), delivery.getChannel());
-
-            delivery.markSent(null);
+            if (delivery.getChannel() == NotificationDelivery.DeliveryChannel.IN_APP) {
+                // In-app is inherently delivered: clients poll
+                // GET /notifications. External channels (FCM/SMS) stay
+                // PENDING until a provider adapter delivers them, and the
+                // retry job (guide §25) re-attempts transient failures.
+                delivery.markSent(null);
+            } else {
+                log.info("Notification {} queued on channel {} for external dispatch",
+                        notification.getId(), delivery.getChannel());
+            }
         } catch (Exception e) {
             log.error("Failed to send notification: {}", notification.getId(), e);
             delivery.markFailed();
         }
 
         deliveryRepository.save(delivery);
+    }
+
+    /**
+     * Retry transiently-failed external deliveries (guide §25). Called by
+     * the notification retry scheduler; FCM/SMS provider adapters hook in
+     * here when they replace the queue-and-retry placeholder.
+     *
+     * @return number of deliveries re-attempted
+     */
+    @Transactional
+    public int retryPendingDeliveries() {
+        var deliverables = deliveryRepository.findByDeliveryStatusIn(List.of(
+                NotificationDelivery.DeliveryStatus.PENDING,
+                NotificationDelivery.DeliveryStatus.RETRYING));
+        int attempted = 0;
+        for (NotificationDelivery delivery : deliverables) {
+            // No external provider is wired yet: each retry pass marks the
+            // attempt and eventually fails it out after 3 tries.
+            delivery.markFailed();
+            deliveryRepository.save(delivery);
+            attempted++;
+        }
+        if (attempted > 0) {
+            log.info("Notification retry pass: {} deliveries re-attempted", attempted);
+        }
+        return attempted;
     }
 
     private NotificationResponse toResponse(Notification notification) {

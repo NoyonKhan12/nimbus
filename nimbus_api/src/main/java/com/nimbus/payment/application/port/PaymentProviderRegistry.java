@@ -18,7 +18,8 @@ public class PaymentProviderRegistry {
     }
 
     public PaymentProvider getProvider(String name) {
-        return providers.get(name);
+        // Clients may send method names in any case ("bkash"/"BKASH").
+        return name == null ? null : providers.get(name.toLowerCase());
     }
 
     public Collection<PaymentProvider> getAllProviders() {

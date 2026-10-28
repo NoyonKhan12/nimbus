@@ -64,7 +64,7 @@ public class DriverProfile {
     @Builder.Default
     private BigDecimal reliabilityScore = BigDecimal.ONE;
 
-    @Column(name = "current_location", columnDefinition = "GEOMETRY(Point, 4326)")
+    @Column(name = "current_location", columnDefinition = "text")
     private String currentLocation;
 
     @Column(name = "current_location_updated_at")

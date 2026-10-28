@@ -30,6 +30,7 @@ public class RatingService {
     private final RatingRepository ratingRepository;
     private final BookingRepository bookingRepository;
     private final UserRepository userRepository;
+    private final com.nimbus.driver.domain.repository.DriverProfileRepository driverProfileRepository;
 
     /**
      * Create a rating for a completed booking.
@@ -63,6 +64,23 @@ public class RatingService {
         User ratedUser = userRepository.findById(request.getRatedId())
                 .orElseThrow(() -> new NimbusException(ErrorCode.USER_NOT_FOUND, HttpStatus.NOT_FOUND));
 
+        // The rated user must be the other participant in this booking.
+        // Without this check a passenger could rate any account (or
+        // themselves), distorting public driver/passenger reputation.
+        UUID expectedCounterparty = null;
+        if (isPassenger && booking.getRide() != null
+                && booking.getRide().getCreator() != null) {
+            expectedCounterparty = booking.getRide().getCreator().getId();
+        } else if (isDriver && booking.getPassenger() != null) {
+            expectedCounterparty = booking.getPassenger().getId();
+        }
+        if (expectedCounterparty == null
+                || !expectedCounterparty.equals(request.getRatedId())) {
+            throw new NimbusException(ErrorCode.VALIDATION_ERROR,
+                    "You can only rate the other participant in this booking",
+                    HttpStatus.BAD_REQUEST);
+        }
+
         // Check for duplicate rating
         if (ratingRepository.existsByBookingIdAndRaterId(request.getBookingId(), userId)) {
             throw new NimbusException(ErrorCode.VALIDATION_ERROR,
@@ -81,8 +99,21 @@ public class RatingService {
 
         ratingRepository.save(rating);
 
-        // Update rated user's average rating (in a real implementation, this would
-        // be done through a domain event or scheduled job to avoid concurrent updates)
+        // Update the rated driver's rolling average (guide §6/§19) — the
+        // driver profile rating is what matching and the apps display.
+        if (booking.getRide() != null && booking.getRide().getDriver() != null) {
+            var driverProfile = booking.getRide().getDriver();
+            if (driverProfile.getUser().getId().equals(request.getRatedId())) {
+                Double average = ratingRepository.findByRatedId(request.getRatedId()).stream()
+                        .mapToInt(Rating::getScore)
+                        .average()
+                        .orElse(0.0);
+                driverProfile.setRating(java.math.BigDecimal
+                        .valueOf(average)
+                        .setScale(2, java.math.RoundingMode.HALF_UP));
+                driverProfileRepository.save(driverProfile);
+            }
+        }
     }
 
     /**

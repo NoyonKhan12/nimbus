@@ -1,0 +1,5 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Cleartext is allowed only in debug/profile builds for the local API.
+         Release builds require HTTPS (enforced by AppConstants.validate()). -->
+    <application android:usesCleartextTraffic="true" />
+</manifest>

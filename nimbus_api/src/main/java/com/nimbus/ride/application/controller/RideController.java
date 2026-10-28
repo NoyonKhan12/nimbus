@@ -23,6 +23,29 @@ import java.util.*;
 public class RideController {
 
     private final RideService rideService;
+    private final com.nimbus.booking.application.service.BookingService bookingService;
+
+    /**
+     * Create a booking nested under its ride (guide §15).
+     * POST /rides/{rideId}/bookings — delegates to the flat
+     * POST /bookings flow with the rideId from the path.
+     */
+    @PostMapping("/{rideId}/bookings")
+    public ResponseEntity<ApiResponse<com.nimbus.booking.application.BookingResponse>> createBooking(
+            @PathVariable UUID rideId,
+            @Valid @RequestBody com.nimbus.booking.application.CreateBookingRequest request) {
+        UUID userId = getCurrentUserId();
+        request.setRideId(rideId);
+        com.nimbus.booking.application.BookingResponse response =
+                bookingService.createBooking(userId, request);
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(ApiResponse.<com.nimbus.booking.application.BookingResponse>builder()
+                        .success(true)
+                        .data(response)
+                        .message("Booking created with seat hold")
+                        .timestamp(Instant.now().toString())
+                        .build());
+    }
 
     /**
      * Create a new ride.
@@ -170,6 +193,55 @@ public class RideController {
     }
 
     /**
+     * Driver marks they are arriving at the pickup point
+     * (→ DRIVER_ARRIVING, guide §8).
+     * POST /rides/{rideId}/arriving
+     */
+    @PostMapping("/{rideId}/arriving")
+    public ResponseEntity<ApiResponse<RideResponse>> markDriverArriving(@PathVariable UUID rideId) {
+        UUID userId = getCurrentUserId();
+        RideResponse response = rideService.markDriverArriving(rideId, userId);
+        return ResponseEntity.ok(ApiResponse.<RideResponse>builder()
+                .success(true)
+                .data(response)
+                .message("Driver arriving")
+                .timestamp(Instant.now().toString())
+                .build());
+    }
+
+    /**
+     * Operational interruption (IN_PROGRESS → INTERRUPTED, guide §8).
+     * POST /rides/{rideId}/interrupt
+     */
+    @PostMapping("/{rideId}/interrupt")
+    public ResponseEntity<ApiResponse<RideResponse>> interruptRide(@PathVariable UUID rideId) {
+        UUID userId = getCurrentUserId();
+        RideResponse response = rideService.interruptRide(rideId, userId);
+        return ResponseEntity.ok(ApiResponse.<RideResponse>builder()
+                .success(true)
+                .data(response)
+                .message("Ride interrupted")
+                .timestamp(Instant.now().toString())
+                .build());
+    }
+
+    /**
+     * Resume from an interruption (INTERRUPTED → IN_PROGRESS).
+     * POST /rides/{rideId}/resume
+     */
+    @PostMapping("/{rideId}/resume")
+    public ResponseEntity<ApiResponse<RideResponse>> resumeRide(@PathVariable UUID rideId) {
+        UUID userId = getCurrentUserId();
+        RideResponse response = rideService.resumeRide(rideId, userId);
+        return ResponseEntity.ok(ApiResponse.<RideResponse>builder()
+                .success(true)
+                .data(response)
+                .message("Ride resumed")
+                .timestamp(Instant.now().toString())
+                .build());
+    }
+
+    /**
      * Complete a ride.
      * POST /rides/{rideId}/complete
      */
@@ -199,6 +271,20 @@ public class RideController {
         return ResponseEntity.ok(ApiResponse.<Void>builder()
                 .success(true)
                 .message("Driver location updated")
+                .timestamp(Instant.now().toString())
+                .build());
+    }
+
+    /**
+     * ETA for the ride (driver position → destination).
+     * GET /rides/{rideId}/eta
+     */
+    @GetMapping("/{rideId}/eta")
+    public ResponseEntity<ApiResponse<java.util.Map<String, Integer>>> getEta(
+            @PathVariable UUID rideId) {
+        return ResponseEntity.ok(ApiResponse.<java.util.Map<String, Integer>>builder()
+                .success(true)
+                .data(rideService.getEta(rideId))
                 .timestamp(Instant.now().toString())
                 .build());
     }

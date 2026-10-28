@@ -10,6 +10,8 @@ public record RecentRide(
     String status,
     String originAddress,
     String destinationAddress,
-    String createdAt
+    java.time.Instant createdAt,
+    String originLocation,
+    String destinationLocation
 ) {
 }

@@ -91,7 +91,7 @@ class RideCard extends StatelessWidget {
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   Text(
-                    '${ride.availableSeats}/${ride.totalSeats} seats',
+                    '${ride.availableSeats} seats available',
                     style: const TextStyle(color: Colors.grey),
                   ),
                   if (ride.scheduledAt != null)

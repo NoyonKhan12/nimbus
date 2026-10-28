@@ -7,6 +7,8 @@ import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.net.InetAddress;
+import java.net.UnknownHostException;
 import java.time.Instant;
 import java.util.UUID;
 
@@ -45,7 +47,7 @@ public class AuditService {
                     .entityId(entityId)
                     .oldValue(maskSensitiveData(oldValue))
                     .newValue(maskSensitiveData(newValue))
-                    .ipAddress(getClientIp(request))
+                    .ipAddress(toInetAddress(getClientIp(request)))
                     .deviceId(null) // Could extract from headers
                     .createdAt(Instant.now())
                     .build();
@@ -55,6 +57,14 @@ public class AuditService {
         } catch (Exception e) {
             log.error("Failed to log audit event: {}", e.getMessage(), e);
         }
+    }
+
+    /**
+     * Audit without request context (jobs, internal flows) — no IP.
+     */
+    public void logAction(UUID actorId, String action, String entityType, UUID entityId,
+                          String oldValue, String newValue) {
+        logAction(actorId, action, entityType, entityId, oldValue, newValue, null);
     }
 
     /**
@@ -84,5 +94,22 @@ public class AuditService {
         }
 
         return request.getRemoteAddr();
+    }
+
+    /**
+     * Converts a client IP string to {@link InetAddress} for the
+     * {@code inet} audit column. Unresolvable/blank values are stored as
+     * NULL rather than failing the audit write.
+     */
+    private InetAddress toInetAddress(String ip) {
+        if (ip == null || ip.isBlank() || "unknown".equalsIgnoreCase(ip)) {
+            return null;
+        }
+        try {
+            return InetAddress.getByName(ip.trim());
+        } catch (UnknownHostException e) {
+            log.warn("Could not parse client IP '{}' for audit: {}", ip, e.getMessage());
+            return null;
+        }
     }
 }

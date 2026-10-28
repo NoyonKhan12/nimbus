@@ -1,7 +1,6 @@
 package com.nimbus.fare.application;
 
 import jakarta.validation.constraints.NotNull;
-import jakarta.validation.constraints.Positive;
 import lombok.*;
 
 import java.util.UUID;
@@ -21,10 +20,28 @@ public class FareQuoteRequest {
 
     private Integer routeVersion;
 
-    @Positive(message = "Distance must be positive")
+    /**
+     * Passenger pickup/drop-off as {@code [longitude, latitude]}, matching
+     * the booking contract. When omitted, the backend falls back to the
+     * ride's origin/destination for compatibility with older clients.
+     */
+    private Double[] pickupLocation;
+
+    /** Passenger drop-off as {@code [longitude, latitude]}. */
+    private Double[] dropoffLocation;
+
+    /**
+     * @deprecated Client-supplied distance/duration are ignored; the
+     * backend derives both from the bound segment.
+     */
+    @Deprecated
     private Integer distanceMeters;
 
-    @Positive(message = "Duration must be positive")
+    /**
+     * @deprecated Client-supplied distance/duration are ignored; the
+     * backend derives both from the bound segment.
+     */
+    @Deprecated
     private Integer durationSeconds;
 
     private Integer seats;

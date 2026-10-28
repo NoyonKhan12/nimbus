@@ -60,7 +60,8 @@ public class ComplaintController {
      */
     @GetMapping("/{complaintId}")
     public ResponseEntity<ApiResponse<Complaint>> getComplaint(@PathVariable UUID complaintId) {
-        Complaint complaint = complaintService.getComplaint(complaintId);
+        Complaint complaint = complaintService.getComplaint(
+                complaintId, getCurrentUserId(), isStaff());
         return ResponseEntity.ok(ApiResponse.<Complaint>builder()
                 .success(true)
                 .data(complaint)
@@ -69,10 +70,12 @@ public class ComplaintController {
     }
 
     /**
-     * Update complaint status (admin only).
+     * Update complaint status (admin/operations/support only — guide §20).
      * PATCH /complaints/{complaintId}/status
      */
     @PatchMapping("/{complaintId}/status")
+    @org.springframework.security.access.prepost.PreAuthorize(
+            "hasAnyRole('ADMIN','OPERATIONS','SUPPORT')")
     public ResponseEntity<ApiResponse<Void>> updateComplaintStatus(
             @PathVariable UUID complaintId,
             @RequestParam Complaint.ComplaintStatus status,
@@ -83,6 +86,16 @@ public class ComplaintController {
                 .message("Complaint status updated")
                 .timestamp(java.time.Instant.now().toString())
                 .build());
+    }
+
+    private boolean isStaff() {
+        var auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null || auth.getAuthorities() == null) return false;
+        return auth.getAuthorities().stream().anyMatch(a -> {
+            String role = a.getAuthority();
+            return "ROLE_ADMIN".equals(role) || "ROLE_OPERATIONS".equals(role)
+                    || "ROLE_SUPPORT".equals(role) || "ROLE_SAFETY".equals(role);
+        });
     }
 
     private UUID getCurrentUserId() {

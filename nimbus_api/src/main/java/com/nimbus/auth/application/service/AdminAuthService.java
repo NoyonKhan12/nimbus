@@ -3,6 +3,7 @@ package com.nimbus.auth.application.service;
 import com.nimbus.kernel.domain.ErrorCode;
 import com.nimbus.kernel.domain.entity.User;
 import com.nimbus.kernel.domain.exception.NimbusException;
+import com.nimbus.kernel.domain.repository.RoleRepository;
 import com.nimbus.kernel.domain.repository.UserRepository;
 import com.nimbus.kernel.infrastructure.security.JwtTokenUtil;
 import com.nimbus.auth.application.AdminLoginRequest;
@@ -16,25 +17,32 @@ import org.springframework.stereotype.Service;
 import java.util.Optional;
 
 /**
- * Admin authentication service handling email/password login.
- * Only users with ADMIN role can authenticate via this service.
+ * Staff-portal authentication service handling email/password login.
+ * Any dynamic staff role (ADMIN, OPERATIONS, FINANCE, SUPPORT, SAFETY, or a
+ * custom role) may authenticate; PASSENGER and DRIVER may not.
  */
 @Service
 @Slf4j
 public class AdminAuthService {
 
     private final UserRepository userRepository;
+    private final com.nimbus.auth.application.service.RefreshSessionService refreshSessionService;
+    private final RoleRepository roleRepository;
     private final JwtTokenUtil jwtTokenUtil;
     private final PasswordEncoder passwordEncoder;
     private final long adminAccessTokenExpirationMs;
 
     public AdminAuthService(UserRepository userRepository,
+                            RoleRepository roleRepository,
                             JwtTokenUtil jwtTokenUtil,
                             PasswordEncoder passwordEncoder,
+                            com.nimbus.auth.application.service.RefreshSessionService refreshSessionService,
                             @Value("${app.jwt.admin-access-token-expiration-ms:86400000}") long adminAccessTokenExpirationMs) {
         this.userRepository = userRepository;
+        this.roleRepository = roleRepository;
         this.jwtTokenUtil = jwtTokenUtil;
         this.passwordEncoder = passwordEncoder;
+        this.refreshSessionService = refreshSessionService;
         this.adminAccessTokenExpirationMs = adminAccessTokenExpirationMs;
     }
 
@@ -62,12 +70,19 @@ public class AdminAuthService {
 
         User user = userOpt.get();
 
-        // Verify ADMIN role
-        if (user.getRole() != User.UserRole.ADMIN) {
-            log.warn("Admin login denied: user {} is not an admin (role={})", email, user.getRole());
+        // Staff roles are dynamic (Settings → Roles). PASSENGER and DRIVER
+        // are app-only roles and must never reach the staff portal; any role
+        // registered in the roles table is a staff role.
+        String role = user.getRole();
+        boolean staffRole = role != null
+                && !"PASSENGER".equals(role)
+                && !"DRIVER".equals(role)
+                && roleRepository.existsByName(role);
+        if (!staffRole) {
+            log.warn("Admin login denied: user {} has no staff role (role={})", email, role);
             throw new NimbusException(
                 ErrorCode.AUTH_UNAUTHORIZED,
-                "Access denied: admin privileges required",
+                "Access denied: staff privileges required",
                 HttpStatus.FORBIDDEN
             );
         }
@@ -94,7 +109,10 @@ public class AdminAuthService {
 
         // Generate tokens — admin tokens have longer expiration (24h default)
         String accessToken = jwtTokenUtil.generateAccessToken(user, adminAccessTokenExpirationMs);
-        String refreshToken = jwtTokenUtil.generateRefreshToken(user);
+        // Staff refresh tokens are session-backed too, so they can be revoked
+            // via DELETE /auth/sessions like any other session (guide §18).
+            String sessionId = refreshSessionService.createSession(user.getId(), "staff-portal", "WEB");
+            String refreshToken = jwtTokenUtil.generateRefreshToken(user, sessionId);
 
         log.info("Admin login successful: {}", email);
 

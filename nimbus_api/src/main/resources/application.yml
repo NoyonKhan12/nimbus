@@ -26,6 +26,11 @@ spring:
     time-zone: UTC
   cache:
     type: redis
+  servlet:
+    multipart:
+      # Driver documents are validated again in DocumentStorageService.
+      max-file-size: 10MB
+      max-request-size: 12MB
 
 logging:
   level:
@@ -50,8 +55,13 @@ management:
       percentiles-histogram[all]: true
 
 app:
+  upload:
+    # Profile photos and driver documents live outside the packaged app.
+    dir: ${APP_UPLOAD_DIR:./data/uploads}
+    max-document-bytes: ${APP_UPLOAD_MAX_DOCUMENT_BYTES:10485760}
   jwt:
-    secret: ${JWT_SECRET:bmltYnVzLWRldi1zZWNyZXQta2V5LWNoYW5nZS1pbi1wcm9kdWN0aW9u}
+    # Required: never ship a fallback signing key. Compose/.env supplies it.
+    secret: ${JWT_SECRET}
     access-token-expiration-ms: 900000
     admin-access-token-expiration-ms: 86400000
     refresh-token-expiration-ms: 2592000000
@@ -60,6 +70,13 @@ app:
     code-length: 6
     max-attempts: 3
     rate-limit-per-15min: 5
+  bootstrap:
+    admin:
+      # Opt-in only. Never enable with a shared/default password in prod.
+      enabled: ${ADMIN_BOOTSTRAP_ENABLED:false}
+      email: ${ADMIN_EMAIL:admin@nimbus.com}
+      password: ${ADMIN_PASSWORD:}
+      phone: "${ADMIN_PHONE:+8801923456789}"
   argon2:
     salt-length: 16
     hash-length: 32

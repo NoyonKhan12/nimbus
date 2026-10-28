@@ -45,11 +45,11 @@ class OtpServiceTest {
         assertTrue(otp.matches("\\d{6}"));
 
         verify(valueOperations, times(1)).set(
-                eq("nimbus:otp:" + phone),
+                eq("otp:" + phone),
                 eq(otp),
                 any(Duration.class)
         );
-        verify(redisTemplate, times(1)).delete("nimbus:otp:attempts:" + phone);
+        verify(redisTemplate, times(1)).delete("otp:attempts:" + phone);
     }
 
     @Test
@@ -58,13 +58,13 @@ class OtpServiceTest {
         String otp = "123456";
 
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
-        when(valueOperations.get("nimbus:otp:" + phone)).thenReturn(otp);
+        when(valueOperations.get("otp:" + phone)).thenReturn(otp);
 
         boolean result = otpService.validateOtp(phone, otp);
 
         assertTrue(result);
-        verify(redisTemplate).delete("nimbus:otp:" + phone);
-        verify(redisTemplate).delete("nimbus:otp:attempts:" + phone);
+        verify(redisTemplate).delete("otp:" + phone);
+        verify(redisTemplate).delete("otp:attempts:" + phone);
     }
 
     @Test
@@ -73,13 +73,13 @@ class OtpServiceTest {
         String otp = "999999";
 
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
-        when(valueOperations.get("nimbus:otp:" + phone)).thenReturn("123456");
-        when(valueOperations.get("nimbus:otp:attempts:" + phone)).thenReturn(null);
+        when(valueOperations.get("otp:" + phone)).thenReturn("123456");
+        when(valueOperations.get("otp:attempts:" + phone)).thenReturn(null);
 
         boolean result = otpService.validateOtp(phone, otp);
 
         assertFalse(result);
-        verify(valueOperations, times(1)).increment(eq("nimbus:otp:attempts:" + phone));
+        verify(valueOperations, times(1)).increment(eq("otp:attempts:" + phone));
     }
 
     @Test
@@ -88,7 +88,7 @@ class OtpServiceTest {
         String otp = "123456";
 
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
-        when(valueOperations.get("nimbus:otp:" + phone)).thenReturn(null);
+        when(valueOperations.get("otp:" + phone)).thenReturn(null);
 
         boolean result = otpService.validateOtp(phone, otp);
 
@@ -100,7 +100,7 @@ class OtpServiceTest {
         String phone = "+8801712345678";
 
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
-        when(valueOperations.get("nimbus:otp:rate:" + phone)).thenReturn(null);
+        when(valueOperations.get("otp:rate:" + phone)).thenReturn(null);
 
         assertFalse(otpService.isRateLimited(phone));
     }
@@ -110,7 +110,7 @@ class OtpServiceTest {
         String phone = "+8801712345678";
 
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
-        when(valueOperations.get("nimbus:otp:rate:" + phone)).thenReturn("6");
+        when(valueOperations.get("otp:rate:" + phone)).thenReturn("6");
 
         assertTrue(otpService.isRateLimited(phone));
     }
@@ -121,7 +121,7 @@ class OtpServiceTest {
 
         otpService.clearOtp(phone);
 
-        verify(redisTemplate).delete("nimbus:otp:" + phone);
-        verify(redisTemplate).delete("nimbus:otp:attempts:" + phone);
+        verify(redisTemplate).delete("otp:" + phone);
+        verify(redisTemplate).delete("otp:attempts:" + phone);
     }
 }

@@ -45,6 +45,22 @@ public class SafetyEvent {
     @JoinColumn(name = "user_id", nullable = false, foreignKey = @ForeignKey(name = "fk_safety_user"))
     private User user;
 
+    /** Driver involved in the incident (guide §19: SOS records driver). */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "driver_id", foreignKey = @ForeignKey(name = "fk_safety_driver"))
+    private com.nimbus.driver.domain.entity.DriverProfile driver;
+
+    /** Vehicle involved in the incident (guide §19: SOS records vehicle). */
+    @Column(name = "vehicle_id")
+    private UUID vehicleId;
+
+    /** Public token for trip sharing — minimum journey data only. */
+    @Column(name = "share_token", length = 64)
+    private String shareToken;
+
+    @Column(name = "expires_at")
+    private Instant expiresAt;
+
     @Column(name = "event_type", nullable = false, length = 50)
     @Enumerated(EnumType.STRING)
     private EventType eventType;

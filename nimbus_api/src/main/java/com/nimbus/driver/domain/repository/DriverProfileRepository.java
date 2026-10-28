@@ -18,6 +18,7 @@ import java.util.*;
 public interface DriverProfileRepository extends JpaRepository<DriverProfile, UUID> {
     Optional<DriverProfile> findByUserId(UUID userId);
     boolean existsByUserId(UUID userId);
+    List<DriverProfile> findByDueAmountGreaterThan(java.math.BigDecimal dueAmount);
 
     @Deprecated(forRemoval = true)
     List<DriverProfile> findByUserPhoneContainingOrUserEmailContaining(String phone, String email, Pageable pageable);
@@ -33,8 +34,8 @@ public interface DriverProfileRepository extends JpaRepository<DriverProfile, UU
     @Query("SELECT new com.nimbus.admin.domain.projection.DriverAdminProjection(" +
            "d.id, d.user.id, d.user.phone, d.user.email, CAST(d.approvalStatus AS string), " +
            "CAST(d.driverStatus AS string), d.licenseNumber, d.rating, d.totalRides, " +
-           "d.totalEarnings, d.dueAmount, d.createdAt) " +
-           "FROM DriverProfile d JOIN d.user u " +
+           "d.totalEarnings, d.dueAmount, d.createdAt, p.firstName, p.lastName) " +
+           "FROM DriverProfile d JOIN d.user u LEFT JOIN UserProfile p ON p.user.id = d.user.id " +
            "WHERE (:search IS NULL OR u.phone LIKE %:search% OR u.email LIKE %:search%) " +
            "AND (:approvalStatus IS NULL OR d.approvalStatus = :approvalStatus) " +
            "ORDER BY d.createdAt DESC")
@@ -50,7 +51,7 @@ public interface DriverProfileRepository extends JpaRepository<DriverProfile, UU
     @Query("SELECT new com.nimbus.admin.domain.projection.DriverAdminProjection(" +
            "d.id, d.user.id, d.user.phone, d.user.email, CAST(d.approvalStatus AS string), " +
            "CAST(d.driverStatus AS string), d.licenseNumber, d.rating, d.totalRides, " +
-           "d.totalEarnings, d.dueAmount, d.createdAt) " +
-           "FROM DriverProfile d JOIN d.user u WHERE d.id = :id")
+           "d.totalEarnings, d.dueAmount, d.createdAt, p.firstName, p.lastName) " +
+           "FROM DriverProfile d JOIN d.user u LEFT JOIN UserProfile p ON p.user.id = d.user.id WHERE d.id = :id")
     Optional<DriverAdminProjection> findByIdProjection(@Param("id") UUID id);
 }

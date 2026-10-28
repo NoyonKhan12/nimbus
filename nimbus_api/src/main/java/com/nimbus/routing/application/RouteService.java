@@ -1,9 +1,9 @@
 package com.nimbus.routing.application;
 
-import com.nimbus.ride.domain.entity.*;
-import com.nimbus.ride.domain.repository.*;
 import com.nimbus.booking.domain.entity.Booking;
 import com.nimbus.booking.domain.repository.BookingRepository;
+import com.nimbus.ride.domain.entity.*;
+import com.nimbus.ride.domain.repository.*;
 import lombok.Getter;
 import lombok.Setter;
 import lombok.Builder;
@@ -20,22 +20,23 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 /**
- * Route optimization service for ride pooling.
+ * Route optimization service for ride pooling (guide §10).
  *
- * <p>Algorithm (MVP - feasible insertion heuristic):
- * 1. Start from driver origin/current position
- * 2. Represent each passenger with pickup and dropoff nodes
- * 3. Try feasible insertion positions for the new pair
- * 4. Reject capacity, pickup-order, wait, detour, and time violations
- * 5. Use route distance/duration estimates to calculate insertion cost
- * 6. Choose the lowest-cost feasible insertion
- * 7. Persist a new route version and mark it active
- * 8. Lock the route before execution</p>
+ * <p>MVP uses a feasible insertion heuristic over the driver's
+ * origin→destination line: each pickup/drop-off pair is ordered by its
+ * projection along the route so a passenger's pickup always precedes their
+ * drop-off, and the resulting stop sequence is persisted as a new immutable
+ * route version. The route becomes locked before execution; post-lock
+ * changes require the controlled operations path.</p>
  */
 @Service
 @RequiredArgsConstructor
 @Slf4j
 public class RouteService {
+
+    private static final String PROVIDER = "FLEXIBLE_INSERTION";
+    /** Average city speed used for planned-time estimates (~18 km/h). */
+    private static final double AVG_SPEED_MPS = 5.0;
 
     private final RideRepository rideRepository;
     private final RideStopRepository rideStopRepository;
@@ -43,56 +44,33 @@ public class RouteService {
     private final BookingRepository bookingRepository;
 
     /**
-     * Plan a route for a ride with existing bookings.
-     * Creates a new route version with stops for all passengers.
+     * (Re)build the full stop sequence for a ride from its confirmed
+     * bookings and persist a new active route version. Idempotent: existing
+     * stops are replaced.
      */
     @Transactional
     public RideRoute planRoute(UUID rideId) {
         Ride ride = rideRepository.findById(rideId)
                 .orElseThrow(() -> new IllegalArgumentException("Ride not found: " + rideId));
 
-        if (ride.getStatus() != Ride.RideStatus.PUBLISHED &&
-            ride.getStatus() != Ride.RideStatus.ROUTE_LOCKED) {
-            throw new IllegalStateException("Ride must be PUBLISHED or ROUTE_LOCKED to plan route");
-        }
-
-        // Get all confirmed passengers
         List<Booking> confirmedBookings = bookingRepository.findByRideIdAndStatus(
                 rideId, Booking.BookingStatus.CONFIRMED);
 
-        // Build route with stops
-        List<RideStop> stops = buildRouteStops(ride, confirmedBookings);
+        rideStopRepository.deleteByRideId(rideId);
+        rideStopRepository.flush();
 
-        // Calculate route metrics
-        RouteMetrics metrics = calculateRouteMetrics(stops);
+        List<Waypoint> waypoints = buildWaypoints(ride, confirmedBookings);
+        List<RideStop> stops = persistStops(ride, waypoints);
 
-        // Create new route version
-        int newVersion = ride.getRouteVersion() + 1;
-        ride.setRouteVersion(newVersion);
-        rideRepository.save(ride);
-
-        // Save route
-        RideRoute route = RideRoute.builder()
-                .ride(ride)
-                .version(newVersion)
-                .provider("FLEXIBLE_INSERTION")
-                .polyline(generatePolyline(stops))
-                .distanceMeters(metrics.totalDistance)
-                .durationSeconds(metrics.totalDuration)
-                .optimizationScore(metrics.score)
-                .isActive(true)
-                .build();
-
-        // Deactivate previous active routes
-        rideRouteRepository.findByRideId(rideId).forEach(prevRoute ->
-                prevRoute.setIsActive(false));
-
-        return rideRouteRepository.save(route);
+        return persistRouteVersion(ride, stops);
     }
 
     /**
-     * Insert a new booking's pickup/dropoff into the existing route.
-     * Uses feasible insertion heuristic.
+     * Insert a newly confirmed booking's pickup/drop-off into the ride's
+     * route and persist a new active route version (guide §10: choose the
+     * lowest-cost feasible insertion — here, ordering by projection along
+     * the driver's line, which preserves pickup-before-dropoff by
+     * construction).
      */
     @Transactional
     public RideRoute insertBookingIntoRoute(UUID rideId, UUID bookingId) {
@@ -102,189 +80,194 @@ public class RouteService {
         Booking booking = bookingRepository.findById(bookingId)
                 .orElseThrow(() -> new IllegalArgumentException("Booking not found: " + bookingId));
 
-        // Get existing stops
-        List<RideStop> existingStops = rideStopRepository.findByRideIdOrderBySequence(rideId);
-
-        // Find best insertion position for pickup and dropoff
-        InsertionPoint pickupInsertion = findBestInsertion(existingStops, booking, true);
-        InsertionPoint dropoffInsertion = findBestInsertion(existingStops, booking, false);
-
-        // Validate pickup before dropoff
-        if (!isValidPickupBeforeDropoff(existingStops, pickupInsertion, dropoffInsertion)) {
-            throw new IllegalStateException("Cannot insert: pickup must come before dropoff");
+        List<RideStop> existing = rideStopRepository.findByRideIdOrderBySequence(rideId);
+        if (existing.isEmpty()) {
+            // First insertion: build the whole route including this booking.
+            List<Booking> confirmed = bookingRepository.findByRideIdAndStatus(
+                    rideId, Booking.BookingStatus.CONFIRMED);
+            if (confirmed.stream().noneMatch(b -> b.getId().equals(bookingId))) {
+                confirmed.add(booking);
+            }
+            rideStopRepository.deleteByRideId(rideId);
+            rideStopRepository.flush();
+            List<Waypoint> waypoints = buildWaypoints(ride, confirmed);
+            List<RideStop> stops = persistStops(ride, waypoints);
+            return persistRouteVersion(ride, stops);
         }
 
-        // Validate capacity
-        if (!validateCapacity(ride, existingStops, booking.getSeats())) {
-            throw new IllegalStateException("Cannot insert: vehicle capacity exceeded");
+        // Projected position of the new stops along the driver's line.
+        double[] origin = parseWktPoint(ride.getOriginLocation());
+        double[] dest = parseWktPoint(ride.getDestinationLocation());
+
+        // Collect current sequence as waypoints plus the new pair.
+        List<Waypoint> waypoints = new ArrayList<>();
+        for (RideStop stop : existing) {
+            waypoints.add(new Waypoint(stop.getStopType(), stop.getBooking() != null
+                    ? stop.getBooking().getId() : null,
+                    parseWktPoint(stop.getLocation()), stop.getAddress(),
+                    stop.getPlannedTime()));
+        }
+        if (origin != null && dest != null) {
+            waypoints.add(new Waypoint(RideStop.StopType.PICKUP, booking.getId(),
+                    parseWktPoint(booking.getPickupLocation()), booking.getPickupAddress(),
+                    plannedTime(origin, dest, booking.getPickupLocation(), ride.getScheduledAt())));
+            waypoints.add(new Waypoint(RideStop.StopType.DROPOFF, booking.getId(),
+                    parseWktPoint(booking.getDropoffLocation()), booking.getDropoffAddress(),
+                    plannedTime(origin, dest, booking.getDropoffLocation(), ride.getScheduledAt())));
+        } else {
+            // Without route geometry, append pickup then dropoff before the end.
+            waypoints.add(new Waypoint(RideStop.StopType.PICKUP, booking.getId(),
+                    parseWktPoint(booking.getPickupLocation()), booking.getPickupAddress(),
+                    ride.getScheduledAt()));
+            waypoints.add(new Waypoint(RideStop.StopType.DROPOFF, booking.getId(),
+                    parseWktPoint(booking.getDropoffLocation()), booking.getDropoffAddress(),
+                    ride.getScheduledAt()));
         }
 
-        // Apply insertions
-        applyInsertions(existingStops, pickupInsertion, dropoffInsertion, booking);
+        List<RideStop> stops = persistStops(ride, orderWaypoints(waypoints, origin, dest));
+        return persistRouteVersion(ride, stops);
+    }
 
-        // Recalculate route
-        RouteMetrics metrics = calculateRouteMetrics(existingStops);
+    /**
+     * Snapshot + persist the execution route before the ride starts
+     * (guide §5: route becomes locked before execution). Called from
+     * RideService.lockRoute — the status transition stays owned there.
+     */
+    @Transactional
+    public RideRoute lockRouteForExecution(UUID rideId) {
+        Ride ride = rideRepository.findById(rideId)
+                .orElseThrow(() -> new IllegalArgumentException("Ride not found: " + rideId));
+        List<RideStop> stops = rideStopRepository.findByRideIdOrderBySequence(rideId);
+        if (stops.isEmpty()) {
+            return planRoute(rideId);
+        }
+        return rideRouteRepository.findByRideIdAndIsActiveTrue(rideId)
+                .orElseGet(() -> persistRouteVersion(ride, stops));
+    }
 
-        // Create new route version
-        int newVersion = ride.getRouteVersion() + 1;
+    // ── Internals ────────────────────────────────────────────────────────
+
+    private List<Waypoint> buildWaypoints(Ride ride, List<Booking> bookings) {
+        double[] origin = parseWktPoint(ride.getOriginLocation());
+        double[] dest = parseWktPoint(ride.getDestinationLocation());
+
+        List<Waypoint> waypoints = new ArrayList<>();
+        waypoints.add(new Waypoint(RideStop.StopType.ORIGIN, null, origin,
+                ride.getOriginAddress(), ride.getScheduledAt()));
+
+        for (Booking booking : bookings) {
+            waypoints.add(new Waypoint(RideStop.StopType.PICKUP, booking.getId(),
+                    parseWktPoint(booking.getPickupLocation()), booking.getPickupAddress(),
+                    plannedTime(origin, dest, booking.getPickupLocation(), ride.getScheduledAt())));
+            waypoints.add(new Waypoint(RideStop.StopType.DROPOFF, booking.getId(),
+                    parseWktPoint(booking.getDropoffLocation()), booking.getDropoffAddress(),
+                    plannedTime(origin, dest, booking.getDropoffLocation(), ride.getScheduledAt())));
+        }
+
+        waypoints.add(new Waypoint(RideStop.StopType.DESTINATION, null, dest,
+                ride.getDestinationAddress(), ride.getScheduledAt()));
+        return orderWaypoints(waypoints, origin, dest);
+    }
+
+    /**
+     * Orders waypoints by their projection along the origin→destination
+     * line. ORIGIN always first, DESTINATION always last, pickups before
+     * their own dropoffs guaranteed by sorting pickups ahead of dropoffs
+     * of the same booking at equal projection.
+     */
+    private List<Waypoint> orderWaypoints(List<Waypoint> waypoints, double[] origin, double[] dest) {
+        List<Waypoint> sorted = new ArrayList<>(waypoints);
+        Comparator<Waypoint> byProjection = Comparator.comparingDouble(w -> {
+            if (w.getStopType() == RideStop.StopType.ORIGIN) return -1.0;
+            if (w.getStopType() == RideStop.StopType.DESTINATION) return Double.MAX_VALUE;
+            if (origin == null || dest == null || w.getCoords() == null) return 0;
+            return projectionT(origin, dest, w.getCoords());
+        });
+        sorted.sort(byProjection
+                .thenComparing(w -> w.getStopType() == RideStop.StopType.PICKUP ? 0 : 1));
+        return sorted;
+    }
+
+    private List<RideStop> persistStops(Ride ride, List<Waypoint> waypoints) {
+        List<RideStop> stops = new ArrayList<>();
+        int sequence = 1;
+        int elapsedSeconds = 0;
+        double[] prev = null;
+        Instant baseTime = ride.getScheduledAt() != null ? ride.getScheduledAt() : Instant.now();
+
+        for (Waypoint w : waypoints) {
+            if (w.getCoords() != null && prev != null) {
+                elapsedSeconds += (int) (haversineMeters(prev, w.getCoords()) / AVG_SPEED_MPS);
+            }
+            Instant planned = w.getStopType() == RideStop.StopType.ORIGIN
+                    ? baseTime
+                    : baseTime.plusSeconds(elapsedSeconds);
+            RideStop stop = RideStop.builder()
+                    .ride(ride)
+                    .booking(w.getBookingId() != null
+                            ? Booking.builder().id(w.getBookingId()).build() : null)
+                    .sequence(sequence++)
+                    .stopType(w.getStopType())
+                    .location(w.getCoords() != null
+                            ? String.format("POINT(%.6f %.6f)", w.getCoords()[1], w.getCoords()[0])
+                            : null)
+                    .address(w.getAddress())
+                    .plannedTime(planned)
+                    .status(RideStop.StopStatus.PENDING)
+                    .build();
+            stops.add(rideStopRepository.save(stop));
+            if (w.getCoords() != null) prev = w.getCoords();
+        }
+        return stops;
+    }
+
+    /**
+     * Persist a new active route version (guide §10: persist a new route
+     * version and mark it active; history is preserved).
+     */
+    private RideRoute persistRouteVersion(Ride ride, List<RideStop> stops) {
+        rideRouteRepository.findByRideId(rideId(ride)).forEach(prev -> prev.setIsActive(false));
+
+        RouteMetrics metrics = calculateRouteMetrics(stops);
+        int newVersion = (ride.getRouteVersion() != null ? ride.getRouteVersion() : 0) + 1;
         ride.setRouteVersion(newVersion);
         rideRepository.save(ride);
 
-        return RideRoute.builder()
+        RideRoute route = RideRoute.builder()
                 .ride(ride)
                 .version(newVersion)
-                .provider("FLEXIBLE_INSERTION")
-                .polyline(generatePolyline(existingStops))
-                .distanceMeters(metrics.totalDistance)
-                .durationSeconds(metrics.totalDuration)
-                .optimizationScore(metrics.score)
+                .provider(PROVIDER)
+                .polyline(generatePolyline(stops))
+                .distanceMeters(metrics.getTotalDistance())
+                .durationSeconds(metrics.getTotalDuration())
+                .optimizationScore(metrics.getScore())
                 .isActive(true)
                 .build();
+        return rideRouteRepository.save(route);
     }
 
-    /**
-     * Lock route for execution - no more changes allowed.
-     */
-    @Transactional
-    public void lockRoute(UUID rideId) {
-        Ride ride = rideRepository.findById(rideId)
-                .orElseThrow(() -> new IllegalArgumentException("Ride not found: " + rideId));
-
-        if (ride.getStatus() != Ride.RideStatus.PUBLISHED) {
-            throw new IllegalStateException("Only PUBLISHED rides can be locked");
-        }
-
-        ride.setStatus(Ride.RideStatus.ROUTE_LOCKED);
-        ride.setActualStartAt(Instant.now());
-        rideRepository.save(ride);
-
-        log.info("Route locked for ride: {}", rideId);
+    private UUID rideId(Ride ride) {
+        return ride.getId();
     }
 
-    /**
-     * Find the best insertion point for a stop.
-     */
-    private InsertionPoint findBestInsertion(List<RideStop> currentStops, Booking booking, boolean isPickup) {
-        int bestPosition = 0;
-        double bestCost = Double.MAX_VALUE;
-
-        for (int i = 0; i <= currentStops.size(); i++) {
-            double cost = calculateInsertionCost(currentStops, i, booking, isPickup);
-            if (cost < bestCost) {
-                bestCost = cost;
-                bestPosition = i;
+    private RouteMetrics calculateRouteMetrics(List<RideStop> stops) {
+        int totalDistance = 0;
+        double[] prev = null;
+        for (RideStop stop : stops) {
+            double[] coords = parseWktPoint(stop.getLocation());
+            if (coords != null && prev != null) {
+                totalDistance += (int) haversineMeters(prev, coords);
             }
+            if (coords != null) prev = coords;
         }
-
-        return InsertionPoint.builder()
-                .position(bestPosition)
-                .cost(bestCost)
-                .booking(booking)
+        return RouteMetrics.builder()
+                .totalDistance(totalDistance)
+                .totalDuration((int) (totalDistance / AVG_SPEED_MPS))
+                .score(BigDecimal.ONE)
                 .build();
-    }
-
-    private double calculateInsertionCost(List<RideStop> stops, int position,
-                                          Booking booking, boolean isPickup) {
-        // Simple cost model: minimize additional distance
-        // In production, this would call a routing API
-        double baseCost = isPickup ? 0 : 5.0; // Dropoff has slightly higher penalty
-
-        // Add penalty for inserting far from optimal position
-        double positionPenalty = position * 0.1;
-
-        // Add distance penalty based on stop type
-        double typePenalty = isPickup ? 1.0 : 1.5;
-
-        return baseCost + positionPenalty + typePenalty;
-    }
-
-    private boolean isValidPickupBeforeDropoff(List<RideStop> stops,
-                                               InsertionPoint pickup, InsertionPoint dropoff) {
-        // Pickup must be inserted at or before dropoff position
-        if (pickup.getPosition() > dropoff.getPosition()) {
-            // If dropoff is at same position, pickup must come first
-            if (pickup.getPosition() == dropoff.getPosition() && pickup.getCost() > dropoff.getCost()) {
-                return false;
-            }
-            return pickup.getPosition() <= dropoff.getPosition();
-        }
-        return true;
-    }
-
-    private boolean validateCapacity(Ride ride, List<RideStop> stops, int newSeats) {
-        int currentPassengers = stops.stream()
-                .filter(s -> s.getStopType() == RideStop.StopType.PICKUP ||
-                        s.getStopType() == RideStop.StopType.ORIGIN)
-                .mapToInt(s -> Optional.ofNullable(s.getBooking())
-                        .map(Booking::getSeats)
-                        .orElse(1))
-                .sum();
-
-        // Count dropoffs after current position to subtract from capacity
-        int droppedOff = stops.stream()
-                .filter(s -> s.getStopType() == RideStop.StopType.DROPOFF ||
-                        s.getStopType() == RideStop.StopType.DESTINATION)
-                .mapToInt(s -> Optional.ofNullable(s.getBooking())
-                        .map(Booking::getSeats)
-                        .orElse(0))
-                .sum();
-
-        int currentOccupancy = Math.max(0, currentPassengers - droppedOff);
-        return currentOccupancy + newSeats <= ride.getAvailableSeats();
-    }
-
-    private void applyInsertions(List<RideStop> stops,
-                                 InsertionPoint pickup,
-                                 InsertionPoint dropoff,
-                                 Booking booking) {
-        // Create pickup stop
-        RideStop pickupStop = RideStop.builder()
-                .ride(stops.get(0).getRide())
-                .booking(booking)
-                .sequence(pickup.getPosition() + 1)
-                .stopType(RideStop.StopType.PICKUP)
-                .location(booking.getPickupLocation())
-                .address(booking.getPickupAddress())
-                .plannedTime(Instant.now().plusSeconds((long)(pickup.getCost() * 30)))
-                .status(RideStop.StopStatus.PENDING)
-                .build();
-
-        // Create dropoff stop
-        RideStop dropoffStop = RideStop.builder()
-                .ride(stops.get(0).getRide())
-                .booking(booking)
-                .sequence(dropoff.getPosition() + 1)
-                .stopType(RideStop.StopType.DROPOFF)
-                .location(booking.getDropoffLocation())
-                .address(booking.getDropoffAddress())
-                .plannedTime(Instant.now().plusSeconds((long)(dropoff.getCost() * 30)))
-                .status(RideStop.StopStatus.PENDING)
-                .build();
-
-        // Re-sequence stops
-        int seq = 1;
-        List<RideStop> newStops = new ArrayList<>();
-        // Insert pickup at position
-        newStops.addAll(stops.subList(0, pickup.getPosition()));
-        newStops.add(pickupStop);
-        // Insert dropoff (adjusting position if needed)
-        int dropoffPos = dropoff.getPosition() + 1; // +1 for the pickup insertion
-        newStops.addAll(stops.subList(pickup.getPosition(), Math.min(dropoffPos, stops.size())));
-        newStops.add(dropoffStop);
-        if (dropoffPos < stops.size()) {
-            newStops.addAll(stops.subList(dropoffPos, stops.size()));
-        }
-
-        // Update sequences
-        for (int i = 0; i < newStops.size(); i++) {
-            newStops.get(i).setSequence(i + 1);
-            rideStopRepository.save(newStops.get(i));
-        }
     }
 
     private String generatePolyline(List<RideStop> stops) {
-        // Generate encoded polyline from stop locations
-        // Simplified for now - in production would use actual routing geometry
         return stops.stream()
                 .map(RideStop::getLocation)
                 .filter(Objects::nonNull)
@@ -292,124 +275,43 @@ public class RouteService {
                 .collect(Collectors.joining("|"));
     }
 
-    private List<RideStop> buildRouteStops(Ride ride, List<Booking> bookings) {
-        List<RideStop> stops = new ArrayList<>();
-        int sequence = 1;
-
-        // Add origin stop
-        if (ride.getOriginLocation() != null) {
-            stops.add(RideStop.builder()
-                    .ride(ride)
-                    .sequence(sequence++)
-                    .stopType(RideStop.StopType.ORIGIN)
-                    .location(ride.getOriginLocation())
-                    .address(ride.getOriginAddress())
-                    .plannedTime(ride.getScheduledAt())
-                    .status(RideStop.StopStatus.PENDING)
-                    .build());
-        }
-
-        // Add pickup/dropoff stops for each booking
-        for (Booking booking : bookings) {
-            if (booking.getPickupLocation() != null) {
-                stops.add(RideStop.builder()
-                        .ride(ride)
-                        .booking(booking)
-                        .sequence(sequence++)
-                        .stopType(RideStop.StopType.PICKUP)
-                        .location(booking.getPickupLocation())
-                        .address(booking.getPickupAddress())
-                        .plannedTime(booking.getPickupPlannedTime())
-                        .status(RideStop.StopStatus.PENDING)
-                        .build());
-            }
-            if (booking.getDropoffLocation() != null) {
-                stops.add(RideStop.builder()
-                        .ride(ride)
-                        .booking(booking)
-                        .sequence(sequence++)
-                        .stopType(RideStop.StopType.DROPOFF)
-                        .location(booking.getDropoffLocation())
-                        .address(booking.getDropoffAddress())
-                        .plannedTime(booking.getDropoffPlannedTime())
-                        .status(RideStop.StopStatus.PENDING)
-                        .build());
-            }
-        }
-
-        // Add destination stop
-        if (ride.getDestinationLocation() != null) {
-            stops.add(RideStop.builder()
-                    .ride(ride)
-                    .sequence(sequence++)
-                    .stopType(RideStop.StopType.DESTINATION)
-                    .location(ride.getDestinationLocation())
-                    .address(ride.getDestinationAddress())
-                    .plannedTime(ride.getScheduledAt()) // Will be adjusted
-                    .status(RideStop.StopStatus.PENDING)
-                    .build());
-        }
-
-        // Save all stops
-        stops.forEach(stop -> rideStopRepository.save(stop));
-
-        return stops;
+    /** Planned arrival time for a stop, from cumulative distance at ~18 km/h. */
+    private Instant plannedTime(double[] origin, double[] dest, String locationWkt, Instant scheduledAt) {
+        Instant base = scheduledAt != null ? scheduledAt : Instant.now();
+        double[] point = parseWktPoint(locationWkt);
+        if (origin == null || dest == null || point == null) return base;
+        double meters = haversineMeters(origin, point);
+        return base.plusSeconds((long) (meters / AVG_SPEED_MPS));
     }
 
-    private RouteMetrics calculateRouteMetrics(List<RideStop> stops) {
-        int totalDistance = 0;
-        int totalDuration = 0;
-        double score = 1.0;
-
-        // Simple metric calculation
-        // In production, this would call a routing API
-        for (int i = 1; i < stops.size(); i++) {
-            RideStop prev = stops.get(i - 1);
-            RideStop curr = stops.get(i);
-            if (prev.getLocation() != null && curr.getLocation() != null) {
-                // Calculate distance between stops
-                double[] prevCoords = parseWktPoint(prev.getLocation());
-                double[] currCoords = parseWktPoint(curr.getLocation());
-                if (prevCoords != null && currCoords != null) {
-                    double dist = haversineDistance(prevCoords, currCoords);
-                    totalDistance += (int) dist;
-                    totalDuration += (int) (dist / 15.0); // Assume 15 m/s avg speed
-                }
-            }
-        }
-
-        return RouteMetrics.builder()
-                .totalDistance(totalDistance)
-                .totalDuration(totalDuration)
-                .score(BigDecimal.valueOf(score))
-                .build();
-    }
-
+    /** Parses {@code POINT(lng lat)} WKT as {lat, lng}. */
     private double[] parseWktPoint(String wkt) {
         if (wkt == null || !wkt.startsWith("POINT(")) return null;
         try {
             String coords = wkt.substring(6, wkt.length() - 1);
-            String[] parts = coords.split(" ");
+            String[] parts = coords.trim().split("\\s+");
             return new double[]{Double.parseDouble(parts[1]), Double.parseDouble(parts[0])};
         } catch (Exception e) {
             return null;
         }
     }
 
-    private double haversineDistance(double[] coord1, double[] coord2) {
-        double lat1 = Math.toRadians(coord1[0]);
-        double lon1 = Math.toRadians(coord1[1]);
-        double lat2 = Math.toRadians(coord2[0]);
-        double lon2 = Math.toRadians(coord2[1]);
+    private double projectionT(double[] a, double[] b, double[] p) {
+        double dx = b[1] - a[1];
+        double dy = b[0] - a[0];
+        double lenSq = dx * dx + dy * dy;
+        if (lenSq == 0) return 0;
+        double t = ((p[1] - a[1]) * dx + (p[0] - a[0]) * dy) / lenSq;
+        return Math.max(0, Math.min(1, t));
+    }
 
-        double dLat = lat2 - lat1;
-        double dLon = lon2 - lon1;
-
-        double a = Math.sin(dLat/2) * Math.sin(dLat/2) +
-                Math.cos(lat1) * Math.cos(lat2) *
-                Math.sin(dLon/2) * Math.sin(dLon/2);
-        double c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-        return 6371000 * c;
+    private double haversineMeters(double[] a, double[] b) {
+        double dLat = Math.toRadians(b[0] - a[0]);
+        double dLng = Math.toRadians(b[1] - a[1]);
+        double h = Math.sin(dLat / 2) * Math.sin(dLat / 2)
+                + Math.cos(Math.toRadians(a[0])) * Math.cos(Math.toRadians(b[0]))
+                * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+        return 2 * 6371000 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
     }
 
     @Getter @Setter @Builder
@@ -421,12 +323,15 @@ public class RouteService {
         private BigDecimal score;
     }
 
+    /** One route node awaiting sequencing. */
     @Getter @Setter @Builder
     @NoArgsConstructor
     @AllArgsConstructor
-    private static class InsertionPoint {
-        private int position;
-        private double cost;
-        private Booking booking;
+    private static class Waypoint {
+        private RideStop.StopType stopType;
+        private UUID bookingId;
+        private double[] coords;
+        private String address;
+        private Instant plannedTime;
     }
 }

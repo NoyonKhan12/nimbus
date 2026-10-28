@@ -33,11 +33,35 @@ public class FareQuote {
     @Column(name = "booking_id")
     private UUID bookingId;
 
+    /** Ride this quote was priced for; enforced when the booking consumes it. */
+    @Column(name = "ride_id")
+    private UUID rideId;
+
+    /** Passenger who requested the quote; prevents cross-user quote reuse. */
+    @Column(name = "user_id")
+    private UUID userId;
+
     @Column(name = "rule_version", nullable = false, length = 50)
     private String ruleVersion;
 
     @Column(name = "route_version", nullable = false)
     private Integer routeVersion;
+
+    /**
+     * Passenger segment this quote was priced for. Booking creation must
+     * match these coordinates so a short quote cannot cover a long trip.
+     */
+    @Column(name = "pickup_latitude")
+    private Double pickupLatitude;
+
+    @Column(name = "pickup_longitude")
+    private Double pickupLongitude;
+
+    @Column(name = "dropoff_latitude")
+    private Double dropoffLatitude;
+
+    @Column(name = "dropoff_longitude")
+    private Double dropoffLongitude;
 
     @Column(name = "distance_meters", nullable = false)
     private Integer distanceMeters;
@@ -64,6 +88,10 @@ public class FareQuote {
     @Column(name = "discount", nullable = false, precision = 18, scale = 2)
     @Builder.Default
     private BigDecimal discount = BigDecimal.ZERO;
+
+    /** Voucher code applied when this quote was priced (null if none). */
+    @Column(name = "voucher_code", length = 50)
+    private String voucherCode;
 
     @Column(name = "gross_fare", nullable = false, precision = 18, scale = 2)
     private BigDecimal grossFare;

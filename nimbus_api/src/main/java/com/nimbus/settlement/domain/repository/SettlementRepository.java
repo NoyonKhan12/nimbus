@@ -20,6 +20,7 @@ public interface SettlementRepository extends JpaRepository<Settlement, UUID> {
     Optional<Settlement> findByDriverIdAndPeriodStartAndPeriodEnd(UUID driverId, Instant periodStart, Instant periodEnd);
     long countByStatus(Settlement.SettlementStatus status);
     List<Settlement> findByPeriodStartBetween(Instant start, Instant end);
+    List<Settlement> findByDriverIdOrderByPeriodStartDesc(UUID driverId);
 
     // ── Optimized admin queries ──────────────────────────────────────────
 

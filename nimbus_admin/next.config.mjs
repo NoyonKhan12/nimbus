@@ -9,7 +9,10 @@ const nextConfig = {
     domains: ['images.unsplash.com', 'ui-avatars.com'],
   },
   env: {
-    API_BASE_URL: process.env.API_BASE_URL || 'http://localhost:9090/api/v1',
+    API_BASE_URL:
+      process.env.NEXT_PUBLIC_API_BASE_URL ||
+      process.env.API_BASE_URL ||
+      'http://localhost:9090/api/v1',
     ADMIN_LOGIN_URL: process.env.ADMIN_LOGIN_URL || '/login',
   },
 };

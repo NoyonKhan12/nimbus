@@ -2,6 +2,7 @@ package com.nimbus.auth.application;
 
 import com.nimbus.auth.application.service.AuthService;
 import com.nimbus.auth.application.service.OtpService;
+import com.nimbus.auth.application.service.RefreshSessionService;
 import com.nimbus.kernel.domain.ErrorCode;
 import com.nimbus.auth.application.*;
 import com.nimbus.kernel.domain.entity.*;
@@ -29,9 +30,23 @@ class AuthServiceTest {
     @Mock private UserProfileRepository userProfileRepository;
     @Mock private UserDeviceRepository userDeviceRepository;
     @Mock private AuditLogRepository auditLogRepository;
+    @Mock private RefreshSessionService refreshSessionService;
+    @Mock private com.nimbus.auth.application.port.SmsProvider smsProvider;
 
-    @InjectMocks
     private AuthService authService;
+
+    @BeforeEach
+    void setUp() {
+        authService = new AuthService(
+                otpService,
+                jwtTokenUtil,
+                userRepository,
+                userProfileRepository,
+                userDeviceRepository,
+                auditLogRepository,
+                refreshSessionService,
+                Optional.of(smsProvider));
+    }
 
     @Test
     void sendOtp_success() {
@@ -81,13 +96,14 @@ class AuthServiceTest {
                 .id(UUID.randomUUID())
                 .phone("+8801712345678")
                 .status(User.UserStatus.ACTIVE)
-                .role(User.UserRole.PASSENGER)
+                .role("PASSENGER")
                 .phoneVerified(true)
                 .build();
 
         when(userRepository.save(any(User.class))).thenReturn(savedUser);
         when(jwtTokenUtil.generateAccessToken(any(User.class))).thenReturn("access-token");
-        when(jwtTokenUtil.generateRefreshToken(any(User.class))).thenReturn("refresh-token");
+        when(refreshSessionService.createSession(any(UUID.class), any(), any())).thenReturn("session-1");
+        when(jwtTokenUtil.generateRefreshToken(any(User.class), eq("session-1"))).thenReturn("refresh-token");
         when(jwtTokenUtil.getAccessTokenExpirationMs()).thenReturn(900000L);
 
         AuthResponse response = authService.verifyOtp(request);
@@ -125,14 +141,15 @@ class AuthServiceTest {
                 .id(UUID.randomUUID())
                 .phone("+8801712345678")
                 .status(User.UserStatus.ACTIVE)
-                .role(User.UserRole.PASSENGER)
+                .role("PASSENGER")
                 .phoneVerified(true)
                 .build();
 
         when(otpService.validateOtp("+8801712345678", "123456")).thenReturn(true);
         when(userRepository.findByPhone("+8801712345678")).thenReturn(Optional.of(existingUser));
         when(jwtTokenUtil.generateAccessToken(any(User.class))).thenReturn("access-token");
-        when(jwtTokenUtil.generateRefreshToken(any(User.class))).thenReturn("refresh-token");
+        when(refreshSessionService.createSession(any(UUID.class), any(), any())).thenReturn("session-1");
+        when(jwtTokenUtil.generateRefreshToken(any(User.class), eq("session-1"))).thenReturn("refresh-token");
         when(jwtTokenUtil.getAccessTokenExpirationMs()).thenReturn(900000L);
 
         AuthResponse response = authService.verifyOtp(request);

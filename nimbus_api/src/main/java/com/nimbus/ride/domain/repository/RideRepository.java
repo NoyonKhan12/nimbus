@@ -7,6 +7,7 @@ import com.nimbus.ride.domain.entity.Ride;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -23,6 +24,21 @@ public interface RideRepository extends JpaRepository<Ride, UUID> {
     List<Ride> findByCreatorId(UUID creatorId);
 
     List<Ride> findByCreatorIdAndStatus(UUID creatorId, Ride.RideStatus status);
+
+    /**
+     * Pessimistic write lock used by seat allocation: booking creation
+     * serializes on the ride row so concurrent bookings cannot overbook
+     * (guide §5/§7).
+     */
+    @Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT r FROM Ride r WHERE r.id = :id")
+    Optional<Ride> findByIdForUpdate(@Param("id") UUID id);
+
+    /** Admin ride detail: fetch ride with passengers eagerly (stops stay lazy — unused here). */
+    @Query("SELECT r FROM Ride r " +
+           "LEFT JOIN FETCH r.passengers " +
+           "WHERE r.id = :id")
+    Optional<Ride> findDetailedById(@Param("id") UUID id);
 
     List<Ride> findByStatus(Ride.RideStatus status);
     long countByStatusIn(Collection<Ride.RideStatus> statuses);
@@ -43,6 +59,18 @@ public interface RideRepository extends JpaRepository<Ride, UUID> {
             @Param("driverId") UUID driverId,
             @Param("statuses") Collection<Ride.RideStatus> statuses
     );
+
+    // ── Recurring ride templates (guide §2) ─────────────────────────────
+
+    /** Active recurring templates: materializer input. */
+    @Query("SELECT r FROM Ride r WHERE r.type = RECURRING " +
+           "AND r.recurrenceType <> NONE " +
+           "AND r.parentRideId IS NULL AND r.deletedAt IS NULL " +
+           "AND (r.recurrenceUntil IS NULL OR r.recurrenceUntil > :now)")
+    List<Ride> findActiveRecurringTemplates(@Param("now") java.time.Instant now);
+
+    /** Whether an instance already exists at/after the given slot. */
+    boolean existsByParentRideIdAndScheduledAtIsGreaterThanEqual(UUID parentRideId, Instant scheduledAt);
 
     @Query("SELECT r FROM Ride r WHERE r.status = PUBLISHED " +
            "AND (:status IS NULL OR r.status = :status) " +
@@ -85,7 +113,8 @@ public interface RideRepository extends JpaRepository<Ride, UUID> {
      */
     @Query("SELECT new com.nimbus.admin.domain.projection.RecentRide(" +
            "CAST(r.id AS string), CAST(u.id AS string), CAST(d.user.id AS string), " +
-           "CAST(r.status AS string), r.originAddress, r.destinationAddress, CAST(r.createdAt AS string)) " +
+           "CAST(r.status AS string), r.originAddress, r.destinationAddress, r.createdAt, " +
+           "CAST(r.originLocation AS string), CAST(r.destinationLocation AS string)) " +
            "FROM Ride r LEFT JOIN r.driver d LEFT JOIN r.creator u " +
            "ORDER BY r.createdAt DESC")
     List<RecentRide> findRecentRides(Pageable pageable);

@@ -66,13 +66,13 @@ public class Ride {
     @Enumerated(EnumType.STRING)
     private RideStatus status = RideStatus.DRAFT;
 
-    @Column(name = "origin_location", columnDefinition = "GEOMETRY(Point, 4326)")
+    @Column(name = "origin_location", columnDefinition = "text")
     private String originLocation;
 
     @Column(name = "origin_address", length = 500)
     private String originAddress;
 
-    @Column(name = "destination_location", columnDefinition = "GEOMETRY(Point, 4326)")
+    @Column(name = "destination_location", columnDefinition = "text")
     private String destinationLocation;
 
     @Column(name = "destination_address", length = 500)
@@ -121,6 +121,22 @@ public class Ride {
     public enum RideType {
         SCHEDULED, INSTANT, RECURRING
     }
+
+    /** Recurrence pattern for recurring ride templates (guide §2). */
+    public enum RecurrenceType { NONE, DAILY, WEEKLY }
+
+    @Column(name = "recurrence_type", nullable = false, length = 20)
+    @Enumerated(EnumType.STRING)
+    @Builder.Default
+    private RecurrenceType recurrenceType = RecurrenceType.NONE;
+
+    /** Recurring instances stop being materialized after this instant. */
+    @Column(name = "recurrence_until")
+    private Instant recurrenceUntil;
+
+    /** Set on materialized instances of a recurring template. */
+    @Column(name = "parent_ride_id")
+    private UUID parentRideId;
 
     public enum RideStatus {
         DRAFT,         // Being created

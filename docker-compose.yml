@@ -54,21 +54,35 @@ services:
       - SPRING_REDIS_HOST=nimbus-redis
       - SPRING_REDIS_PORT=6379
       - SPRING_PROFILES_ACTIVE=local
+      - JWT_SECRET=${JWT_SECRET}
+      # Local-only convenience: OTPs are written to the container log so
+      # developers can log in without an SMS provider. Never enable in prod.
+      - NIMBUS_SMS_LOG_CONTENT=true
+      # Uploads (profile photos, driver documents) persist on the host.
+      - APP_UPLOAD_DIR=/app/data/uploads
+      # First admin is opt-in. Set ADMIN_PASSWORD in .env to seed one.
+      - ADMIN_BOOTSTRAP_ENABLED=${ADMIN_BOOTSTRAP_ENABLED:-false}
+      - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@nimbus.com}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
+      - ADMIN_PHONE=${ADMIN_PHONE:-+8801923456789}
     ports:
       - "9090:8080"
     volumes:
       - ./nimbus_api/target:/app/target
       - ./nimbus_api/src/main/resources:/app/src/main/resources
+      - ./nimbus_api/data/uploads:/app/data/uploads
 
   admin:
     container_name: nimbus-admin
     build:
       context: ./nimbus_admin
       dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_BASE_URL: http://localhost:9090/api/v1
     depends_on:
       - api
     environment:
-      - NEXT_PUBLIC_API_BASE_URL=http://nimbus-api:8080/api/v1
+      - NEXT_PUBLIC_API_BASE_URL=http://localhost:9090/api/v1
     ports:
       - "3002:3002"
     volumes:

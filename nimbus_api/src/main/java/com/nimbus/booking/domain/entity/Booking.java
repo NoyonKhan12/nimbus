@@ -53,13 +53,13 @@ public class Booking {
     @Enumerated(EnumType.STRING)
     private BookingStatus status = BookingStatus.HELD;
 
-    @Column(name = "pickup_location", columnDefinition = "GEOMETRY(Point, 4326)")
+    @Column(name = "pickup_location", columnDefinition = "text")
     private String pickupLocation;
 
     @Column(name = "pickup_address", length = 500)
     private String pickupAddress;
 
-    @Column(name = "dropoff_location", columnDefinition = "GEOMETRY(Point, 4326)")
+    @Column(name = "dropoff_location", columnDefinition = "text")
     private String dropoffLocation;
 
     @Column(name = "dropoff_address", length = 500)

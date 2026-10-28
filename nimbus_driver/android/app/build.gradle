@@ -1,0 +1,111 @@
+plugins {
+    id "com.android.application"
+    id "kotlin-android"
+    id "dev.flutter.flutter-gradle-plugin"
+}
+
+// Release signing: create android/keystore.properties (gitignored) from
+// android/keystore.properties.example, then put the upload keystore outside
+// version control. Release builds without a keystore fail rather than
+// silently shipping a debug-signed artifact. For a local verification build
+// only, pass -PallowDebugSigning=true.
+def keystoreProperties = new Properties()
+def keystorePropertiesFile = rootProject.file('keystore.properties')
+if (keystorePropertiesFile.exists()) {
+    keystorePropertiesFile.withReader('UTF-8') { keystoreProperties.load(it) }
+}
+def hasReleaseKeystore = keystorePropertiesFile.exists()
+
+def localProperties = new Properties()
+def localPropertiesFile = rootProject.file('local.properties')
+if (localPropertiesFile.exists()) {
+    localPropertiesFile.withReader('UTF-8') { reader ->
+        localProperties.load(reader)
+    }
+}
+
+// Apply the Firebase google-services plugin only when the config exists.
+def hasGoogleServices = file('google-services.json').exists()
+
+def flutterVersionCode = localProperties.getProperty('flutter.versionCode') ?: '1'
+def flutterVersionName = localProperties.getProperty('flutter.versionName') ?: '1.0.0'
+
+// Production defaults. Local verification can pass
+// -PcompileSdk=34 -PtargetSdk=34 when the API 35 platform is unavailable.
+def requestedCompileSdk = (project.findProperty('compileSdk') ?: '35').toInteger()
+def requestedTargetSdk = (project.findProperty('targetSdk') ?: '35').toInteger()
+
+android {
+    namespace "com.nimbus.driver"
+    compileSdk requestedCompileSdk
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_11
+        targetCompatibility JavaVersion.VERSION_11
+    }
+
+    kotlinOptions {
+        jvmTarget = '11'
+    }
+
+    sourceSets {
+        main.java.srcDirs += 'src/main/kotlin'
+    }
+
+    defaultConfig {
+        applicationId "com.nimbus.driver"
+        minSdkVersion 23
+        targetSdkVersion requestedTargetSdk
+        versionCode flutterVersionCode.toInteger()
+        versionName flutterVersionName
+        multiDexEnabled true
+        resValue "string", "app_name", "Nimbus Driver"
+    }
+
+    signingConfigs {
+        release {
+            if (hasReleaseKeystore) {
+                keyAlias = keystoreProperties['keyAlias']
+                keyPassword = keystoreProperties['keyPassword']
+                storeFile = keystoreProperties['storeFile'] ? file(keystoreProperties['storeFile']) : null
+                storePassword = keystoreProperties['storePassword']
+            }
+            enableV1Signing true
+            enableV2Signing true
+            enableV3Signing true
+        }
+    }
+
+    buildTypes {
+        debug {
+            applicationIdSuffix ".debug"
+            versionNameSuffix "-debug"
+        }
+        release {
+            signingConfig = hasReleaseKeystore
+                    ? signingConfigs.release
+                    : (project.hasProperty('allowDebugSigning') ? signingConfigs.debug : null)
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    lint {
+        checkReleaseBuilds true
+        abortOnError true
+        disable 'InvalidPackage'
+    }
+}
+
+flutter {
+    source '../..'
+}
+
+dependencies {
+    implementation "androidx.multidex:multidex:2.0.1"
+}
+
+if (hasGoogleServices) {
+    apply plugin: 'com.google.gms.google-services'
+}

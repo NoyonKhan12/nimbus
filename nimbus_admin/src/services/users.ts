@@ -11,12 +11,14 @@ export const getUsers = async (
   size: number = 20,
   search?: string,
   status?: string,
+  role?: string,
 ): Promise<PagedResponse<UserInfo>> => {
   const params = new URLSearchParams();
   params.set('page', page.toString());
   params.set('size', size.toString());
   if (search) params.set('search', search);
   if (status) params.set('status', status);
+  if (role) params.set('role', role);
 
   const response = await api.get(`/admin/users?${params}`);
   const wrapped = response.data;
@@ -48,4 +50,20 @@ export const updateUserStatus = async (
  */
 export const deleteUser = async (id: string): Promise<void> => {
   await api.delete(`/admin/users/${id}`);
+};
+
+/**
+ * Create a staff account (internal roles only).
+ */
+export const createUser = async (payload: {
+  phone: string;
+  email?: string;
+  password: string;
+  role: string;
+  firstName?: string;
+  lastName?: string;
+}): Promise<UserInfo> => {
+  const response = await api.post('/admin/users', payload);
+  const wrapped = response.data;
+  return (wrapped.data ?? wrapped) as UserInfo;
 };

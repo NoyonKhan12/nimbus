@@ -14,6 +14,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -31,6 +32,8 @@ public class AuthService {
     private final UserProfileRepository userProfileRepository;
     private final UserDeviceRepository userDeviceRepository;
     private final AuditLogRepository auditLogRepository;
+    private final RefreshSessionService refreshSessionService;
+    private final java.util.Optional<com.nimbus.auth.application.port.SmsProvider> smsProvider;
 
     @Autowired
     public AuthService(
@@ -39,13 +42,17 @@ public class AuthService {
             UserRepository userRepository,
             UserProfileRepository userProfileRepository,
             UserDeviceRepository userDeviceRepository,
-            AuditLogRepository auditLogRepository) {
+            AuditLogRepository auditLogRepository,
+            RefreshSessionService refreshSessionService,
+            java.util.Optional<com.nimbus.auth.application.port.SmsProvider> smsProvider) {
         this.otpService = otpService;
         this.jwtTokenUtil = jwtTokenUtil;
         this.userRepository = userRepository;
         this.userProfileRepository = userProfileRepository;
         this.userDeviceRepository = userDeviceRepository;
         this.auditLogRepository = auditLogRepository;
+        this.refreshSessionService = refreshSessionService;
+        this.smsProvider = smsProvider;
     }
 
     /**
@@ -66,12 +73,24 @@ public class AuthService {
                 HttpStatus.TOO_MANY_REQUESTS
             );
         }
+        // Count this request. The counter was previously only read, so the
+        // per-phone limit could never be reached (guide §18).
+        otpService.incrementRateLimit(phone);
 
         String otp = otpService.storeOtp(phone);
-        log.debug("OTP generated for phone {}: {} (for production, this would be sent via SMS)", phone, otp);
 
-        // TODO: In production, integrate with an SMS provider (e.g., bKash, custom SMS gateway)
-        // smsProvider.send(phone, "Your verification code is: " + otp);
+        // Guide §12: providers sit behind adapters. The default console
+        // provider records the dispatch; real providers are a drop-in.
+        String message = "Your Nimbus verification code is: " + otp;
+        smsProvider.ifPresentOrElse(
+                p -> {
+                    try {
+                        p.send(phone, message);
+                    } catch (Exception e) {
+                        log.warn("SMS dispatch failed for {}: {}", phone, e.getMessage());
+                    }
+                },
+                () -> log.warn("OTP generated for phone {} but no SMS provider is configured", phone));
     }
 
     /**
@@ -96,11 +115,14 @@ public class AuthService {
         if (userOpt.isPresent()) {
             user = userOpt.get();
         } else {
-            // Create new user
+            // Create new user. OTP verification IS the phone verification
+            // step, so the account starts ACTIVE — the JWT filter only
+            // authenticates ACTIVE users, and a PENDING status here made
+            // every request after login return 403.
             user = User.builder()
                     .phone(phone)
-                    .status(User.UserStatus.PENDING)
-                    .role(User.UserRole.PASSENGER)
+                    .status(User.UserStatus.ACTIVE)
+                    .role("PASSENGER")
                     .phoneVerified(true)
                     .build();
             user = userRepository.save(user);
@@ -142,7 +164,7 @@ public class AuthService {
                         .deviceId(request.getDeviceId())
                         .platform(UserDevice.Platform.valueOf(request.getPlatform().toUpperCase()))
                         .pushToken(request.getPushToken())
-                        .appVersion(request.getPlatform())
+                        .appVersion(request.getAppVersion())
                         .lastSeenAt(Instant.now())
                         .status(UserDevice.DeviceStatus.ACTIVE)
                         .build();
@@ -150,9 +172,14 @@ public class AuthService {
             userDeviceRepository.save(device);
         }
 
+        // Create a refresh session and bind it to the refresh token so it can
+        // be rotated and revoked server-side (guide §14 auth:refresh:{sessionId}).
+        String sessionId = refreshSessionService.createSession(
+                user.getId(), request.getDeviceId(), request.getPlatform());
+
         // Generate tokens
         String accessToken = jwtTokenUtil.generateAccessToken(user);
-        String refreshToken = jwtTokenUtil.generateRefreshToken(user);
+        String refreshToken = jwtTokenUtil.generateRefreshToken(user, sessionId);
 
         return AuthResponse.builder()
                 .accessToken(accessToken)
@@ -164,6 +191,11 @@ public class AuthService {
 
     /**
      * Refresh access token using refresh token.
+     *
+     * <p>Implements rotation with revocation: when the token carries a
+     * session id, the session must still exist in Redis (a revoked or
+     * reused session is rejected) and is swapped for a fresh one. Legacy
+     * tokens without a session id are adopted into a tracked session.</p>
      */
     public AuthResponse refreshToken(RefreshTokenRequest request) {
         String refreshToken = request.getRefreshToken();
@@ -181,8 +213,18 @@ public class AuthService {
                 throw new NimbusException(ErrorCode.AUTH_UNAUTHORIZED, HttpStatus.UNAUTHORIZED);
             }
 
+            String oldSessionId = jwtTokenUtil.getSessionIdFromToken(refreshToken);
+            String newSessionId;
+            if (oldSessionId != null) {
+                // Rotation: fails with 401 if the session was revoked/expired.
+                newSessionId = refreshSessionService.rotate(oldSessionId, userId);
+            } else {
+                // Legacy token minted before session tracking.
+                newSessionId = refreshSessionService.createSession(userId, null, null);
+            }
+
             String newAccessToken = jwtTokenUtil.generateAccessToken(user);
-            String newRefreshToken = jwtTokenUtil.generateRefreshToken(user);
+            String newRefreshToken = jwtTokenUtil.generateRefreshToken(user, newSessionId);
 
             return AuthResponse.builder()
                     .accessToken(newAccessToken)
@@ -197,6 +239,54 @@ public class AuthService {
             log.error("Token refresh failed: {}", e.getMessage());
             throw new NimbusException(ErrorCode.AUTH_TOKEN_INVALID, HttpStatus.UNAUTHORIZED);
         }
+    }
+
+    /**
+     * Logout: revoke the refresh session bound to the presented refresh
+     * token. When no refresh token is supplied but the caller is
+     * authenticated, all of the user's sessions are revoked.
+     *
+     * @return number of sessions revoked
+     */
+    public int logout(String refreshToken, UUID authenticatedUserId) {
+        if (refreshToken != null && !refreshToken.isBlank()
+                && jwtTokenUtil.isRefreshToken(refreshToken)) {
+            UUID userId = jwtTokenUtil.getUserIdFromToken(refreshToken);
+            String sessionId = jwtTokenUtil.getSessionIdFromToken(refreshToken);
+            if (sessionId != null && refreshSessionService.revoke(sessionId, userId)) {
+                logAudit(userId, "LOGOUT", "USER", userId, null, "session=" + sessionId);
+                return 1;
+            }
+            return 0;
+        }
+        if (authenticatedUserId != null) {
+            long count = refreshSessionService.listForUser(authenticatedUserId).size();
+            refreshSessionService.revokeAllForUser(authenticatedUserId);
+            if (count > 0) {
+                logAudit(authenticatedUserId, "LOGOUT_ALL", "USER", authenticatedUserId,
+                        null, "sessions=" + count);
+            }
+            return (int) count;
+        }
+        return 0;
+    }
+
+    /**
+     * List active refresh sessions for the current user.
+     */
+    public List<RefreshSessionService.SessionInfo> listSessions(UUID userId) {
+        return refreshSessionService.listForUser(userId);
+    }
+
+    /**
+     * Revoke one of the current user's sessions.
+     */
+    public boolean revokeSession(UUID userId, String sessionId) {
+        boolean revoked = refreshSessionService.revoke(sessionId, userId);
+        if (revoked) {
+            logAudit(userId, "SESSION_REVOKED", "USER", userId, null, "session=" + sessionId);
+        }
+        return revoked;
     }
 
     /**

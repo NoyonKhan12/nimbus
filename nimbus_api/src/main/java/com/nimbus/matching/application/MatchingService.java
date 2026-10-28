@@ -1,13 +1,15 @@
 package com.nimbus.matching.application;
 
 import com.nimbus.driver.domain.repository.DriverProfileRepository;
+import com.nimbus.kernel.domain.ErrorCode;
+import com.nimbus.kernel.domain.exception.NimbusException;
 import com.nimbus.matching.domain.model.*;
 import com.nimbus.ride.domain.entity.Ride;
 import com.nimbus.ride.domain.repository.RideRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.locationtech.jts.geom.*;
-import org.locationtech.jts.util.GeometricShapeFactory;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -34,7 +36,17 @@ public class MatchingService {
 
     private final RideRepository rideRepository;
     private final DriverProfileRepository driverProfileRepository;
+    private final com.nimbus.driver.domain.repository.VehicleRepository vehicleRepository;
+    private final com.nimbus.kernel.domain.repository.UserRepository userRepository;
     private final GeometryFactory geometryFactory = new GeometryFactory();
+
+    /** Vehicle eligibility per guide §5: approved status and capacity. */
+    private boolean isVehicleEligible(java.util.UUID vehicleId) {
+        return vehicleRepository.findById(vehicleId)
+                .map(v -> v.getStatus() == com.nimbus.driver.domain.entity.Vehicle.VehicleStatus.APPROVED
+                        && v.getSeatCapacity() != null && v.getSeatCapacity() > 0)
+                .orElse(false);
+    }
 
     /**
      * Match passenger with compatible rides.
@@ -84,6 +96,205 @@ public class MatchingService {
     }
 
     /**
+     * Live ride search (guide §9): fetch published candidates, apply hard
+     * constraints, score with the standard weights — route overlap 40%
+     * (bearing similarity), pickup proximity 20%, dropoff proximity 20%,
+     * time compatibility 10%, driver reliability 5%, other 5% — and return
+     * the ranked rides. This is the single matching engine used by search
+     * and revalidated by booking.
+     */
+    @Transactional(readOnly = true)
+    public List<Ride> findMatchingRides(double originLat, double originLng,
+                                        double destLat, double destLng,
+                                        Instant time) {
+        List<Ride> rides = rideRepository.findSearchableRides(
+                Ride.RideStatus.PUBLISHED, null);
+
+        record Scored(Ride ride, double score) {}
+        List<Scored> scored = new ArrayList<>();
+        for (Ride ride : rides) {
+            // Hard constraint (guide §5/§9): the driver must still be
+            // eligible — approved, active account, zero due — else their
+            // rides do not surface in search at all.
+            if (ride.getDriver() != null) {
+                var dp = driverProfileRepository.findById(ride.getDriver().getId()).orElse(null);
+                if (dp == null
+                        || dp.getApprovalStatus() != com.nimbus.driver.domain.entity.DriverProfile.ApprovalStatus.APPROVED
+                        || (dp.getDueAmount() != null
+                            && dp.getDueAmount().compareTo(java.math.BigDecimal.ZERO) > 0)
+                        || !userRepository.findById(dp.getUser().getId())
+                            .map(com.nimbus.kernel.domain.entity.User::isActive)
+                            .orElse(false)) {
+                    continue;
+                }
+            }
+            if (ride.getAvailableSeats() <= 0) continue;                 // capacity
+            double[] o = wktToLatLng(ride.getOriginLocation());
+            double[] d = wktToLatLng(ride.getDestinationLocation());
+            if (o == null || d == null) continue;                        // no route points
+
+            double pickupDist = haversineMeters(originLat, originLng, o[0], o[1]);
+            double dropDist = haversineMeters(destLat, destLng, d[0], d[1]);
+            int corridor = ride.getMaxDetourMeters() != null
+                    ? ride.getMaxDetourMeters() : DEFAULT_MAX_DETOUR_METERS;
+            if (pickupDist > corridor || dropDist > corridor) continue;  // corridor
+            if (!withinTimeWindow(ride, time)) continue;                 // time window
+
+            double pickupProx = 1 - Math.min(1, pickupDist / corridor);
+            double dropProx = 1 - Math.min(1, dropDist / corridor);
+            double overlap = directionSimilarity(o[0], o[1], d[0], d[1],
+                    originLat, originLng, destLat, destLng);
+            double timeScore = time == null ? 0.5
+                    : 1 - Math.min(1, Math.abs(
+                        ride.getScheduledAt() != null
+                            ? ride.getScheduledAt().toEpochMilli() - time.toEpochMilli()
+                            : 0) / (30.0 * 60_000));
+            double reliability = ride.getDriver() != null
+                    && ride.getDriver().getRating() != null
+                        ? Math.min(1, ride.getDriver().getRating().doubleValue() / 5.0)
+                        : 0.5;
+
+            double score = 0.40 * overlap + 0.20 * pickupProx + 0.20 * dropProx
+                    + 0.10 * Math.max(0, timeScore) + 0.05 * reliability + 0.05;
+            scored.add(new Scored(ride, score));
+        }
+
+        scored.sort((a, b) -> Double.compare(b.score(), a.score()));
+        return scored.stream().map(Scored::ride).collect(Collectors.toList());
+    }
+
+    /** Search time window: scheduled departure within ±30 minutes. */
+    private boolean withinTimeWindow(Ride ride, Instant time) {
+        if (time == null || ride.getScheduledAt() == null) return true;
+        long diffMinutes = Math.abs(ride.getScheduledAt().toEpochMilli() - time.toEpochMilli()) / 60000;
+        return diffMinutes <= 30;
+    }
+
+    /** 0..1 similarity of two segment directions (1 = same bearing). */
+    private double directionSimilarity(double lat1, double lng1, double lat2, double lng2,
+                                       double lat3, double lng3, double lat4, double lng4) {
+        double b1 = bearingDegrees(lat1, lng1, lat2, lng2);
+        double b2 = bearingDegrees(lat3, lng3, lat4, lng4);
+        double delta = Math.toRadians(b1 - b2);
+        return Math.max(0, Math.cos(delta));
+    }
+
+    private double bearingDegrees(double lat1, double lng1, double lat2, double lng2) {
+        double dLng = Math.toRadians(lng2 - lng1);
+        double phi1 = Math.toRadians(lat1);
+        double phi2 = Math.toRadians(lat2);
+        double y = Math.sin(dLng) * Math.cos(phi2);
+        double x = Math.cos(phi1) * Math.sin(phi2)
+                - Math.sin(phi1) * Math.cos(phi2) * Math.cos(dLng);
+        return (Math.toDegrees(Math.atan2(y, x)) + 360) % 360;
+    }
+
+    /** Parses {@code POINT(lng lat)} WKT as {lat, lng}, or null. */
+    private double[] wktToLatLng(String wkt) {
+        if (wkt == null || !wkt.startsWith("POINT(")) return null;
+        try {
+            String coords = wkt.substring(6, wkt.length() - 1);
+            String[] parts = coords.trim().split("\\s+");
+            return new double[]{Double.parseDouble(parts[1]), Double.parseDouble(parts[0])};
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * Revalidate a booking against the ride's hard constraints inside the
+     * booking transaction (guide §9 algorithm step 7). Checks bookability,
+     * capacity, corridor fit for BOTH pickup and drop-off, and that the
+     * pickup precedes the drop-off along the ride direction.
+     *
+     * @throws NimbusException when any hard constraint fails
+     */
+    public void revalidateBookingFit(Ride ride,
+                                     double pickupLng, double pickupLat,
+                                     double dropoffLng, double dropoffLat,
+                                     int seatsRequested) {
+        // Bookable and capacity (the seat count itself is re-checked by
+        // BookingService under the ride row lock).
+        if (!ride.isBookable()) {
+            throw new NimbusException(ErrorCode.RIDE_NOT_BOOKABLE, HttpStatus.BAD_REQUEST);
+        }
+        if (ride.getRemainingSeats() < seatsRequested) {
+            throw new NimbusException(ErrorCode.RIDE_NO_SEATS, HttpStatus.CONFLICT);
+        }
+
+        Point rideOrigin = parsePoint(ride.getOriginLocation());
+        Point rideDestination = parsePoint(ride.getDestinationLocation());
+        if (rideOrigin == null || rideDestination == null) {
+            return; // no usable route geometry to revalidate against
+        }
+
+        double maxDetourMeters = ride.getMaxDetourMeters() != null
+                ? ride.getMaxDetourMeters() : DEFAULT_MAX_DETOUR_METERS;
+
+        Point pickup = point(pickupLng, pickupLat);
+        Point dropoff = point(dropoffLng, dropoffLat);
+
+        // Corridor: both ends must be within the ride's max detour of the
+        // driver's origin→destination line (guide §9 hard constraint).
+        if (distanceToSegmentMeters(pickup, rideOrigin, rideDestination) > maxDetourMeters) {
+            throw new NimbusException(ErrorCode.VALIDATION_ERROR,
+                    "Pickup is outside the ride's route corridor", HttpStatus.BAD_REQUEST);
+        }
+        if (distanceToSegmentMeters(dropoff, rideOrigin, rideDestination) > maxDetourMeters) {
+            throw new NimbusException(ErrorCode.VALIDATION_ERROR,
+                    "Drop-off is outside the ride's route corridor", HttpStatus.BAD_REQUEST);
+        }
+
+        // Pickup must precede drop-off along the ride direction.
+        if (projectionAlong(pickup, rideOrigin, rideDestination)
+                >= projectionAlong(dropoff, rideOrigin, rideDestination)) {
+            throw new NimbusException(ErrorCode.VALIDATION_ERROR,
+                    "Pickup must come before drop-off along the ride route", HttpStatus.BAD_REQUEST);
+        }
+    }
+
+    private static final int DEFAULT_MAX_DETOUR_METERS = 3000;
+
+    private Point point(double lng, double lat) {
+        Point p = geometryFactory.createPoint(new Coordinate(lng, lat));
+        p.setSRID(4326);
+        return p;
+    }
+
+    /**
+     * Perpendicular distance in meters from p to segment a→b (projection
+     * clamped to the segment, so past the ends measures to the nearer end).
+     */
+    private double distanceToSegmentMeters(Point p, Point a, Point b) {
+        double t = projectionAlong(p, a, b);
+        double px = a.getX() + t * (b.getX() - a.getX());
+        double py = a.getY() + t * (b.getY() - a.getY());
+        return haversineMeters(p.getY(), p.getX(), py, px);
+    }
+
+    /**
+     * Fraction of the way from a to b where the projection of p onto the
+     * a→b line falls, clamped to [0, 1].
+     */
+    private double projectionAlong(Point p, Point a, Point b) {
+        double dx = b.getX() - a.getX();
+        double dy = b.getY() - a.getY();
+        double lengthSq = dx * dx + dy * dy;
+        if (lengthSq == 0) return 0;
+        double t = ((p.getX() - a.getX()) * dx + (p.getY() - a.getY()) * dy) / lengthSq;
+        return Math.max(0, Math.min(1, t));
+    }
+
+    private double haversineMeters(double lat1, double lng1, double lat2, double lng2) {
+        double dLat = Math.toRadians(lat2 - lat1);
+        double dLng = Math.toRadians(lng2 - lng1);
+        double a = Math.sin(dLat / 2) * Math.sin(dLat / 2)
+                + Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2))
+                * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+        return 2 * 6371000 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    }
+
+    /**
      * Fetch spatial/time candidates from published rides.
      * Uses PostGIS spatial queries for proximity filtering.
      */
@@ -113,12 +324,21 @@ public class MatchingService {
         // Constraint 2: Time compatibility
         if (!isTimeCompatible(ride, criteria)) return false;
 
-        // Constraint 3: Driver and vehicle must be eligible
+        // Constraint 3: Driver and vehicle must be eligible (guide §5).
         if (ride.getDriver() != null) {
             var driverProfile = driverProfileRepository.findById(ride.getDriver().getId()).orElse(null);
-            if (driverProfile == null || driverProfile.getApprovalStatus() != com.nimbus.driver.domain.entity.DriverProfile.ApprovalStatus.APPROVED) {
+            if (driverProfile == null
+                    || driverProfile.getApprovalStatus() != com.nimbus.driver.domain.entity.DriverProfile.ApprovalStatus.APPROVED
+                    || (driverProfile.getDueAmount() != null
+                        && driverProfile.getDueAmount().compareTo(java.math.BigDecimal.ZERO) > 0)
+                    || !userRepository.findById(driverProfile.getUser().getId())
+                        .map(com.nimbus.kernel.domain.entity.User::isActive)
+                        .orElse(false)) {
                 return false;
             }
+        }
+        if (ride.getVehicleId() != null && !isVehicleEligible(ride.getVehicleId())) {
+            return false;
         }
 
         // Constraint 4: Capacity must be sufficient

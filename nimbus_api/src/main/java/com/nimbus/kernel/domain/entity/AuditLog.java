@@ -3,6 +3,7 @@ package com.nimbus.kernel.domain.entity;
 import jakarta.persistence.*;
 import lombok.*;
 
+import java.net.InetAddress;
 import java.time.Instant;
 import java.util.UUID;
 
@@ -36,14 +37,20 @@ public class AuditLog {
     @Column(name = "entity_id")
     private UUID entityId;
 
-    @Column(name = "old_value", columnDefinition = "jsonb")
+    @Column(name = "old_value", columnDefinition = "text")
     private String oldValue;
 
-    @Column(name = "new_value", columnDefinition = "jsonb")
+    @Column(name = "new_value", columnDefinition = "text")
     private String newValue;
 
+    /**
+     * Mapped as {@link InetAddress} so Hibernate 6 binds the JDBC parameter
+     * with the PostgreSQL {@code inet} type; a plain String is sent as
+     * varchar and rejected by the column ("column is of type inet but
+     * expression is of type character varying") — even for NULL values.
+     */
     @Column(name = "ip_address", columnDefinition = "inet")
-    private String ipAddress;
+    private InetAddress ipAddress;
 
     @Column(name = "device_id", length = 255)
     private String deviceId;

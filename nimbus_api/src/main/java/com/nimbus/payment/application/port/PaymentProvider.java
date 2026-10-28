@@ -73,15 +73,24 @@ public interface PaymentProvider {
     ) {}
 
     /**
-     * Result of processing a webhook.
+     * Result of processing a webhook. providerEventRef is the provider's
+     * dedupe key for the callback; implementations must verify the
+     * signature BEFORE returning a result.
      */
     record WebhookResult(
             UUID paymentId,
             Payment.PaymentStatus status,
             BigDecimal amount,
             String providerReference,
-            boolean isDuplicate
-    ) {}
+            boolean isDuplicate,
+            String providerEventRef
+    ) {
+        /** Backward-compatible constructor for providers without event refs. */
+        public WebhookResult(UUID paymentId, Payment.PaymentStatus status, BigDecimal amount,
+                             String providerReference, boolean isDuplicate) {
+            this(paymentId, status, amount, providerReference, isDuplicate, null);
+        }
+    }
 
     /**
      * Result of a refund operation.

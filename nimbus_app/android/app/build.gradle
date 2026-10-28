@@ -4,6 +4,18 @@ plugins {
     id "dev.flutter.flutter-gradle-plugin"
 }
 
+// Release signing: create android/keystore.properties (gitignored) from
+// android/keystore.properties.example, then put the upload keystore outside
+// version control. Release builds without a keystore fail rather than
+// silently shipping a debug-signed artifact. For a local verification build
+// only, pass -PallowDebugSigning=true.
+def keystoreProperties = new Properties()
+def keystorePropertiesFile = rootProject.file('keystore.properties')
+if (keystorePropertiesFile.exists()) {
+    keystorePropertiesFile.withReader('UTF-8') { keystoreProperties.load(it) }
+}
+def hasReleaseKeystore = keystorePropertiesFile.exists()
+
 def localProperties = new Properties()
 def localPropertiesFile = rootProject.file('local.properties')
 if (localPropertiesFile.exists()) {
@@ -12,28 +24,30 @@ if (localPropertiesFile.exists()) {
     }
 }
 
-def flutterVersionCode = localProperties.getProperty('flutter.versionCode')
-if (flutterVersionCode == null) {
-    flutterVersionCode = '1'
-}
+// Apply the Firebase google-services plugin only when the config exists.
+// The Flutter layer can also be configured with --dart-define Firebase
+// options, but native config remains the preferred store build path.
+def hasGoogleServices = file('google-services.json').exists()
 
-def flutterVersionName = localProperties.getProperty('flutter.versionName')
-if (flutterVersionName == null) {
-    flutterVersionName = '1.0'
-}
+def flutterVersionCode = localProperties.getProperty('flutter.versionCode') ?: '1'
+def flutterVersionName = localProperties.getProperty('flutter.versionName') ?: '1.0.0'
+
+// Production defaults. Local verification can pass
+// -PcompileSdk=34 -PtargetSdk=34 when the API 35 platform is unavailable.
+def requestedCompileSdk = (project.findProperty('compileSdk') ?: '35').toInteger()
+def requestedTargetSdk = (project.findProperty('targetSdk') ?: '35').toInteger()
 
 android {
-    namespace "com.example.nimbus_app"
-    compileSdk flutter.compileSdkVersion
-    ndkVersion flutter.ndkVersion
+    namespace "com.nimbus.passenger"
+    compileSdk requestedCompileSdk
 
     compileOptions {
-        sourceCompatibility JavaVersion.VERSION_1_8
-        targetCompatibility JavaVersion.VERSION_1_8
+        sourceCompatibility JavaVersion.VERSION_11
+        targetCompatibility JavaVersion.VERSION_11
     }
 
     kotlinOptions {
-        jvmTarget = '1.8'
+        jvmTarget = '11'
     }
 
     sourceSets {
@@ -41,23 +55,48 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId "com.example.nimbus_app"
-        // You can update the following values to match your application needs.
-        // For more information, see: https://docs.flutter.com/deployment/android#reviewing-the-gradle-build-configuration.
-        minSdkVersion 20
-        targetSdkVersion flutter.targetSdkVersion
+        applicationId "com.nimbus.passenger"
+        minSdkVersion 23
+        targetSdkVersion requestedTargetSdk
         versionCode flutterVersionCode.toInteger()
         versionName flutterVersionName
         multiDexEnabled true
+        resValue "string", "app_name", "Nimbus"
+    }
+
+    signingConfigs {
+        release {
+            if (hasReleaseKeystore) {
+                keyAlias = keystoreProperties['keyAlias']
+                keyPassword = keystoreProperties['keyPassword']
+                storeFile = keystoreProperties['storeFile'] ? file(keystoreProperties['storeFile']) : null
+                storePassword = keystoreProperties['storePassword']
+            }
+            enableV1Signing true
+            enableV2Signing true
+            enableV3Signing true
+        }
     }
 
     buildTypes {
-        release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig signingConfigs.debug
+        debug {
+            applicationIdSuffix ".debug"
+            versionNameSuffix "-debug"
         }
+        release {
+            signingConfig = hasReleaseKeystore
+                    ? signingConfigs.release
+                    : (project.hasProperty('allowDebugSigning') ? signingConfigs.debug : null)
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    lint {
+        checkReleaseBuilds true
+        abortOnError true
+        disable 'InvalidPackage'
     }
 }
 
@@ -67,4 +106,8 @@ flutter {
 
 dependencies {
     implementation "androidx.multidex:multidex:2.0.1"
+}
+
+if (hasGoogleServices) {
+    apply plugin: 'com.google.gms.google-services'
 }

@@ -3,7 +3,9 @@
 // ────────────────────────────────────────────────
 
 export const API_BASE_URL =
-  process.env.API_BASE_URL || 'http://localhost:9090/api/v1';
+  process.env.NEXT_PUBLIC_API_BASE_URL ||
+  process.env.API_BASE_URL ||
+  'http://localhost:9090/api/v1';
 
 export const API_TIMEOUT = 30000;
 
@@ -28,9 +30,13 @@ export const ROUTES = {
   DASHBOARD: '/dashboard',
   USERS: '/dashboard/users',
   DRIVERS: '/dashboard/drivers',
+  VEHICLES: '/dashboard/vehicles',
   RIDES: '/dashboard/rides',
   PAYMENTS: '/dashboard/payments',
   SETTLEMENTS: '/dashboard/settlements',
+  COMPLAINTS: '/dashboard/complaints',
+  SAFETY: '/dashboard/safety',
+  CONFIG: '/dashboard/config',
 } as const;
 
 // ────────────────────────────────────────────────
@@ -89,8 +95,23 @@ export const RIDE_STATUSES = ['REQUESTED', 'ACTIVE', 'COMPLETED', 'CANCELLED'];
 
 export const PAYMENT_STATUSES = ['PENDING', 'COMPLETED', 'FAILED', 'REFUNDED'];
 
-export const SETTLEMENT_STATUSES = ['PENDING', 'COMPLETED', 'FAILED'];
+export const SETTLEMENT_STATUSES = ['PENDING', 'PROCESSING', 'PAID', 'FAILED', 'ON_HOLD'];
 
-export const USER_STATUSES = ['ACTIVE', 'SUSPENDED', 'INACTIVE'];
+export const USER_STATUSES = ['ACTIVE', 'SUSPENDED', 'BANNED'];
 
 export const DRIVER_STATUSES = ['ACTIVE', 'SUSPENDED', 'PENDING_APPROVAL'];
+
+// Complaint + safety enums mirror the backend entity enums exactly.
+export const COMPLAINT_STATUSES = ['OPEN', 'IN_PROGRESS', 'RESOLVED', 'CLOSED'];
+
+export const COMPLAINT_CATEGORIES = [
+  'DRIVER_BEHAVIOR',
+  'SAFETY',
+  'CLEANLINESS',
+  'DELAY',
+  'OVERCHARGING',
+  'APP_ISSUE',
+  'OTHER',
+];
+
+export const SAFETY_EVENT_STATUSES = ['OPEN', 'IN_PROGRESS', 'RESOLVED', 'ESCALATED'];

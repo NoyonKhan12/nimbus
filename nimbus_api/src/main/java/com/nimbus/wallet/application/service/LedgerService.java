@@ -2,6 +2,7 @@ package com.nimbus.wallet.application.service;
 
 import com.nimbus.booking.domain.entity.Booking;
 import com.nimbus.driver.domain.entity.DriverProfile;
+import com.nimbus.driver.domain.repository.DriverProfileRepository;
 import com.nimbus.kernel.domain.entity.User;
 import com.nimbus.payment.domain.entity.Payment;
 import com.nimbus.wallet.domain.entity.*;
@@ -29,28 +30,75 @@ public class LedgerService {
     private final WalletRepository walletRepository;
     private final LedgerAccountRepository ledgerAccountRepository;
     private final LedgerEntryRepository ledgerEntryRepository;
+    private final DriverProfileRepository driverProfileRepository;
 
     /**
      * Post a passenger payment to the ledger.
      * Creates double-entry: debit passenger wallet, credit platform revenue.
      */
     @Transactional
-    public void postPassengerPayment(Booking booking, BigDecimal amount, UUID paymentId) {
+    public void postPassengerPayment(Booking booking, BigDecimal amount, UUID paymentId,
+                                     Payment.PaymentMethod method) {
         // Ensure wallet exists
         Wallet wallet = getOrCreateWallet(booking.getPassenger(), Wallet.OwnerType.PASSENGER);
+
+        // Wallet balances are a hard floor: never let a payment succeed and
+        // push the passenger into debt (guide §13).
+        if (method == Payment.PaymentMethod.WALLET
+                && wallet.getBalance().compareTo(amount) < 0) {
+            throw new com.nimbus.kernel.domain.exception.NimbusException(
+                    com.nimbus.kernel.domain.ErrorCode.WALLET_INSUFFICIENT_BALANCE,
+                    org.springframework.http.HttpStatus.CONFLICT);
+        }
+
         LedgerAccount mainAccount = getOrCreateAccount(wallet, LedgerAccount.AccountType.MAIN);
 
-        // Record the payment
-        // Debit: Passenger payment (increases liability - passenger owes money)
-        // Credit: Platform revenue accounts
+        // Immutable ledger record of the collected fare.
         createEntry(mainAccount, LedgerEntry.EntryType.PASSENGER_PAYMENT, amount,
                 "PAYMENT", paymentId, "Passenger payment for booking: " + booking.getId());
 
-        // Update wallet balance
+        // Balance handling depends on the funding source:
+        //  - WALLET: the passenger pays from their balance → DEBIT it.
+        //  - bkash/nagad/cash: money moves outside the wallet (gateway/driver)
+        //    → the ledger records it, but the wallet balance must NOT change.
+        if (method == Payment.PaymentMethod.WALLET) {
+            wallet.adjustBalance(amount.negate());
+            walletRepository.save(wallet);
+        }
+
+        log.info("Posted passenger payment: {} booking: {} method: {}",
+                amount, booking.getId(), method);
+    }
+
+    /**
+     * Refunds a cancelled booking: credits the passenger's wallet as app
+     * credit and records the immutable REFUND entry.
+     */
+    @Transactional
+    public void postRefund(Booking booking, BigDecimal amount, UUID paymentId) {
+        Wallet wallet = getOrCreateWallet(booking.getPassenger(), Wallet.OwnerType.PASSENGER);
+        LedgerAccount mainAccount = getOrCreateAccount(wallet, LedgerAccount.AccountType.MAIN);
+
+        createEntry(mainAccount, LedgerEntry.EntryType.PASSENGER_REFUND, amount,
+                "PAYMENT", paymentId, "Refund for cancelled booking: " + booking.getId());
+
         wallet.adjustBalance(amount);
         walletRepository.save(wallet);
+        log.info("Posted refund: {} booking: {}", amount, booking.getId());
+    }
 
-        log.info("Posted passenger payment: {} booking: {}", amount, booking.getId());
+    /**
+     * Records a cancellation fee for a booking cancelled mid-trip. The fee
+     * is a ledger charge only — it is collected via the normal settlement.
+     */
+    @Transactional
+    public void postCancellationFee(Booking booking, BigDecimal amount) {
+        Wallet wallet = getOrCreateWallet(booking.getPassenger(), Wallet.OwnerType.PASSENGER);
+        LedgerAccount mainAccount = getOrCreateAccount(wallet, LedgerAccount.AccountType.MAIN);
+
+        createEntry(mainAccount, LedgerEntry.EntryType.CANCELLATION_FEE, amount,
+                "BOOKING", booking.getId(), "Cancellation fee for booking: " + booking.getId());
+        log.info("Posted cancellation fee: {} booking: {}", amount, booking.getId());
     }
 
     /**
@@ -61,7 +109,9 @@ public class LedgerService {
                                    BigDecimal grossEarnings,
                                    BigDecimal commission,
                                    UUID bookingId) {
-        DriverProfile driver = DriverProfile.builder().id(driverId).build();
+        DriverProfile driver = driverProfileRepository.findById(driverId)
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "Driver profile not found: " + driverId));
         Wallet wallet = getOrCreateWallet(driver.getUser(), Wallet.OwnerType.DRIVER);
         LedgerAccount mainAccount = getOrCreateAccount(wallet, LedgerAccount.AccountType.MAIN);
 
@@ -123,22 +173,37 @@ public class LedgerService {
     }
 
     /**
-     * Process a settlement payment to a driver.
+     * Process a settlement payment to a driver. The payout is an external
+     * transfer, so the driver's wallet must be debited by the same amount
+     * that was credited at ride completion. Without the debit the driver
+     * could spend the earnings in-app and still receive the bank payout.
      */
     @Transactional
     public void processDriverSettlement(UUID driverId, BigDecimal amount, UUID settlementId) {
-        DriverProfile driver = DriverProfile.builder().id(driverId).build();
+        if (amount == null || amount.signum() <= 0) return;
+
+        DriverProfile driver = driverProfileRepository.findById(driverId)
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "Driver profile not found: " + driverId));
         Wallet wallet = getOrCreateWallet(driver.getUser(), Wallet.OwnerType.DRIVER);
+
+        if (wallet.getBalance().compareTo(amount) < 0) {
+            throw new com.nimbus.kernel.domain.exception.NimbusException(
+                    com.nimbus.kernel.domain.ErrorCode.WALLET_INSUFFICIENT_BALANCE,
+                    "Driver wallet balance is lower than the settlement payout",
+                    org.springframework.http.HttpStatus.CONFLICT);
+        }
+
         LedgerAccount mainAccount = getOrCreateAccount(wallet, LedgerAccount.AccountType.MAIN);
 
         createEntry(mainAccount, LedgerEntry.EntryType.DRIVER_SETTLEMENT, amount,
-                "SETTLEMENT", settlementId, "Settlement payment");
+                "SETTLEMENT", settlementId, "Settlement payout");
 
-        // Decrease wallet balance (money going out)
         wallet.adjustBalance(amount.negate());
         walletRepository.save(wallet);
 
-        log.info("Processed driver settlement: {} settlement: {}", amount, settlementId);
+        log.info("Processed driver settlement: {} settlement: {} driver: {}",
+                amount, settlementId, driverId);
     }
 
     private Wallet getOrCreateWallet(User user, Wallet.OwnerType ownerType) {

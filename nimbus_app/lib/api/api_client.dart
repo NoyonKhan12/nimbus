@@ -4,8 +4,6 @@ import '../dto/auth_dtos.dart';
 import '../dto/user_dtos.dart';
 import '../dto/create_ride_dto.dart';
 import '../dto/fare_quote_dto.dart';
-import '../dto/location_dto.dart';
-import '../dto/error_response_dto.dart';
 import '../dto/ride_booking_dtos.dart';
 import '../dto/driver_dtos.dart';
 import '../dto/payment_dto.dart';

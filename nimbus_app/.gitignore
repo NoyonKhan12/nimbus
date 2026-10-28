@@ -41,3 +41,13 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Flutter iOS build artifacts (machine-specific)
+**/ios/Flutter/Generated.xcconfig
+**/ios/Flutter/ephemeral
+**/ios/Flutter/.last_build_id
+
+# Release signing secrets
+**/android/keystore.properties
+**/android/app/upload-keystore.jks
+*.jks

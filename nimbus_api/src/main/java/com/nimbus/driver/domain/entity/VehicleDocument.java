@@ -53,6 +53,10 @@ public class VehicleDocument {
     @Column(name = "document_url", columnDefinition = "TEXT")
     private String documentUrl;
 
+    /** Opaque storage key (relative path) for an uploaded file. */
+    @Column(name = "storage_key", length = 255)
+    private String storageKey;
+
     @Column(name = "created_at", nullable = false)
     @Builder.Default
     private Instant createdAt = Instant.now();

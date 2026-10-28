@@ -16,6 +16,9 @@ import java.util.UUID;
 @Repository
 public interface AuditLogRepository extends JpaRepository<AuditLog, UUID> {
 
+    /** Retention purge (guide §25): removes logs past the cutoff. */
+    long deleteByCreatedAtBefore(java.time.Instant cutoff);
+
     List<AuditLog> findByActorUserId(UUID actorUserId);
     List<AuditLog> findByAction(String action);
     List<AuditLog> findByEntityTypeAndEntityId(String entityType, UUID entityId);

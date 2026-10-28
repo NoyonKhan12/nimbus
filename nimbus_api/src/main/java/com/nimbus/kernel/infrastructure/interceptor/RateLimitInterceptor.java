@@ -80,6 +80,10 @@ public class RateLimitInterceptor implements HandlerInterceptor {
         if (endpoint.contains("/auth/send-otp")) {
             return 5; // 5 OTP requests per minute
         }
+        // Staff login brute-force protection (guide §18)
+        if (endpoint.contains("/admin/auth/login")) {
+            return 10;
+        }
         if (endpoint.contains("/auth/verify-otp")) {
             return 10; // 10 verify attempts per minute
         }

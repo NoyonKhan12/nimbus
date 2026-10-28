@@ -1,15 +1,17 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { FiUsers, FiTrendingUp, FiRefreshCw, FiClock, FiCalendar, FiMapPin } from 'react-icons/fi';
 import { DashboardStats, RecentRide } from '@/types';
 import { getDashboardStats } from '@/services/dashboard';
-import { formatCurrency, formatDate } from '@/lib/utils';
+import { formatCurrency, formatDate, formatPlace, getBadgeClass, getStatusLabel } from '@/lib/utils';
 
 /**
  * Dashboard overview page with key statistics.
  */
 export default function DashboardPage() {
+  const router = useRouter();
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -144,32 +146,29 @@ export default function DashboardPage() {
               {(stats?.recentRides ?? []).map((ride: RecentRide) => (
                 <tr
                   key={ride.id}
-                  className="border-b hover:bg-gray-50"
+                  onClick={() => router.push(`/dashboard/rides/${ride.id}`)}
+                  className="border-b hover:bg-gray-50 cursor-pointer"
                 >
                   <td className="px-4 py-3 text-sm text-gray-700">
                     {ride.id.slice(0, 8)}
                   </td>
-                  <td className="px-4 py-3 text-sm text-gray-700 flex items-center gap-1">
-                    <FiMapPin className="text-gray-400 text-xs" />
-                    {ride.originAddress ?? '-'}
+                  <td className="px-4 py-3 text-sm text-gray-700">
+                    <span className="flex items-center gap-1">
+                      <FiMapPin className="text-gray-400 text-xs shrink-0" />
+                      {formatPlace(ride.originAddress, ride.originLocation)}
+                    </span>
                   </td>
-                  <td className="px-4 py-3 text-sm text-gray-700 flex items-center gap-1">
-                    <FiMapPin className="text-gray-400 text-xs" />
-                    {ride.destinationAddress ?? '-'}
+                  <td className="px-4 py-3 text-sm text-gray-700">
+                    <span className="flex items-center gap-1">
+                      <FiMapPin className="text-gray-400 text-xs shrink-0" />
+                      {formatPlace(ride.destinationAddress, ride.destinationLocation)}
+                    </span>
                   </td>
                   <td className="px-4 py-3 text-sm">
                     <span
-                      className={`status-badge ${
-                        ride.status === 'COMPLETED'
-                          ? 'status-completed'
-                          : ride.status === 'CANCELLED'
-                            ? 'status-cancelled'
-                            : ride.status === 'ACTIVE'
-                              ? 'status-active'
-                              : 'status-pending'
-                      }`}
+                      className={`status-badge ${getBadgeClass(ride.status ?? undefined)}`}
                     >
-                      {ride.status ?? '-'}
+                      {getStatusLabel(ride.status ?? '')}
                     </span>
                   </td>
                   <td className="px-4 py-3 text-sm text-gray-500">

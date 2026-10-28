@@ -1,17 +1,20 @@
 'use client';
 
+import { useRouter } from 'next/navigation';
+
 import { useEffect, useState } from 'react';
-import { FiUsers, FiSearch, FiRefreshCw, FiFilter, FiChevronLeft, FiChevronRight, FiCheck, FiX, FiPause, FiPlay } from 'react-icons/fi';
+import { FiUserCheck, FiSearch, FiRefreshCw, FiFilter, FiChevronLeft, FiChevronRight, FiPause, FiPlay } from 'react-icons/fi';
 import { DriverInfo } from '@/types';
 import { PagedResponse } from '@/types/paged';
 import {
   getDrivers,
   approveDriver,
   rejectDriver,
-  updateDriverStatus,
+  setDriverApproval,
 } from '@/services/drivers';
 import { DRIVER_STATUSES } from '@/lib/constants';
-import { truncateId, getStatusLabel } from '@/lib/utils';
+import { formatDateTime, getBadgeClass, getStatusLabel, truncateId } from '@/lib/utils';
+import { useToast, ConfirmDialog } from '@/components/toast';
 
 /**
  * Drivers management page — list, approve, reject, suspend/activate.
@@ -26,8 +29,17 @@ export default function DriversPage() {
     totalElements: 0,
   });
 
+  const router = useRouter();
   const [search, setSearch] = useState('');
   const [currentPage, setCurrentPage] = useState(0);
+  const { toast } = useToast();
+
+  // In-flight + confirmation feedback for driver lifecycle actions
+  const [busyDriverId, setBusyDriverId] = useState<string | null>(null);
+  const [pendingAction, setPendingAction] = useState<{
+    driver: DriverInfo;
+    action: 'approve' | 'reject' | 'suspend' | 'activate';
+  } | null>(null);
 
   useEffect(() => {
     loadDrivers();
@@ -56,11 +68,19 @@ export default function DriversPage() {
     }
   };
 
+  const CONFIG: Record<string, { label: string; tone: 'normal' | 'danger'; confirm?: string }> = {
+    approve: { label: 'approved', tone: 'normal' },
+    reject: { label: 'rejected', tone: 'danger', confirm: 'Reject' },
+    suspend: { label: 'suspended', tone: 'danger', confirm: 'Suspend' },
+    activate: { label: 'reinstated', tone: 'normal' },
+  };
+
   const handleAction = async (
     driver: DriverInfo,
     action: 'approve' | 'reject' | 'suspend' | 'activate',
   ) => {
     try {
+      setBusyDriverId(driver.id);
       switch (action) {
         case 'approve':
           await approveDriver(driver.id);
@@ -69,15 +89,33 @@ export default function DriversPage() {
           await rejectDriver(driver.id);
           break;
         case 'suspend':
-          await updateDriverStatus(driver.id, 'SUSPENDED');
+          await setDriverApproval(driver.id, 'SUSPENDED');
           break;
         case 'activate':
-          await updateDriverStatus(driver.id, 'ACTIVE');
+          await setDriverApproval(driver.id, 'APPROVED');
           break;
       }
+      toast('success', `Driver ${CONFIG[action].label}`, `Driver ${truncateId(driver.id)} has been ${CONFIG[action].label}.`);
       loadDrivers();
-    } catch (err) {
-      alert(`Failed to ${action} driver`);
+    } catch (err: unknown) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const apiMessage = (err as any)?.response?.data?.message;
+      toast('error', `${CONFIG[action].confirm ?? action} failed`, apiMessage || `Failed to ${action} driver ${truncateId(driver.id)}`);
+    } finally {
+      setBusyDriverId(null);
+      setPendingAction(null);
+    }
+  };
+
+  /** Destructive/confirmable actions open the feedback dialog first. */
+  const requestAction = (
+    driver: DriverInfo,
+    action: 'approve' | 'reject' | 'suspend' | 'activate',
+  ) => {
+    if (CONFIG[action].tone === 'danger') {
+      setPendingAction({ driver, action });
+    } else {
+      handleAction(driver, action);
     }
   };
 
@@ -92,7 +130,7 @@ export default function DriversPage() {
       <div className="flex justify-between items-center mb-6">
         <div className="flex items-center gap-3">
           <div className="p-2 bg-indigo-100 rounded-lg">
-            <FiUsers className="text-indigo-600 text-xl" />
+            <FiUserCheck className="text-indigo-600 text-xl" />
           </div>
           <h1 className="text-2xl font-bold text-gray-900">Drivers</h1>
         </div>
@@ -155,7 +193,11 @@ export default function DriversPage() {
                   </tr>
                 ))
               : drivers.map((driver) => (
-                  <tr key={driver.id} className="border-b hover:bg-gray-50">
+                  <tr
+                    key={driver.id}
+                    onClick={() => router.push(`/dashboard/drivers/${driver.id}`)}
+                    className="border-b hover:bg-gray-50 cursor-pointer"
+                  >
                     <td className="px-4 py-3 text-sm text-gray-700">{truncateId(driver.id)}</td>
                     <td className="px-4 py-3 text-sm text-gray-700">{driver.phone ?? '-'}</td>
                     <td className="px-4 py-3 text-sm text-gray-700">{driver.licenseNumber ?? '-'}</td>
@@ -167,52 +209,36 @@ export default function DriversPage() {
                     <td className="px-4 py-3 text-sm text-gray-700">{driver.totalEarnings ?? 0}</td>
                     <td className="px-4 py-3 text-sm text-gray-700">{driver.dueAmount ?? 0}</td>
                     <td className="px-4 py-3 text-sm">
-                      <span className={`status-badge ${
-                        driver.approvalStatus === 'PENDING' ? 'status-pending' :
-                        driver.driverStatus === 'ACTIVE' ? 'status-active' :
-                        driver.driverStatus === 'SUSPENDED' ? 'status-suspended' :
-                        ''
-                      }`}>
+                      <span
+                        className={`status-badge ${getBadgeClass(
+                          driver.approvalStatus === 'PENDING' ? 'PENDING' : driver.driverStatus,
+                        )}`}
+                      >
                         {getStatusLabel(driver.approvalStatus ?? driver.driverStatus ?? '')}
                       </span>
                     </td>
-                    <td className="px-4 py-3 text-sm text-gray-500">{driver.createdAt ?? '-'}</td>
+                    <td className="px-4 py-3 text-sm text-gray-500">{formatDateTime(driver.createdAt)}</td>
                     <td className="px-4 py-3">
                       <div className="flex gap-1">
-                        {driver.approvalStatus === 'PENDING' && (
-                          <>
-                            <button
-                              onClick={() => handleAction(driver, 'approve')}
-                              className="text-xs px-2 py-1 bg-emerald-100 text-emerald-700 rounded hover:bg-emerald-200 flex items-center gap-1"
-                            >
-                              <FiCheck className="text-xs" />
-                              Approve
-                            </button>
-                            <button
-                              onClick={() => handleAction(driver, 'reject')}
-                              className="text-xs px-2 py-1 bg-rose-100 text-rose-700 rounded hover:bg-rose-200 flex items-center gap-1"
-                            >
-                              <FiX className="text-xs" />
-                              Reject
-                            </button>
-                          </>
-                        )}
-                        {driver.driverStatus === 'ACTIVE' && (
+                        {(driver.approvalStatus === 'APPROVED' ||
+                          driver.approvalStatus === 'REJECTED') && (
                           <button
-                            onClick={() => handleAction(driver, 'suspend')}
+                            disabled={busyDriverId === driver.id}
+                            onClick={(e) => { e.stopPropagation(); requestAction(driver, "suspend"); }}
                             className="text-xs px-2 py-1 bg-rose-100 text-rose-700 rounded hover:bg-rose-200 flex items-center gap-1"
                           >
                             <FiPause className="text-xs" />
                             Suspend
                           </button>
                         )}
-                        {driver.driverStatus === 'SUSPENDED' && (
+                        {driver.approvalStatus === 'SUSPENDED' && (
                           <button
-                            onClick={() => handleAction(driver, 'activate')}
+                            disabled={busyDriverId === driver.id}
+                            onClick={(e) => { e.stopPropagation(); requestAction(driver, "activate"); }}
                             className="text-xs px-2 py-1 bg-emerald-100 text-emerald-700 rounded hover:bg-emerald-200 flex items-center gap-1"
                           >
                             <FiPlay className="text-xs" />
-                            Activate
+                            Reinstate
                           </button>
                         )}
                       </div>
@@ -249,6 +275,32 @@ export default function DriversPage() {
           </div>
         </div>
       )}
+
+      {/* Confirm dialog for reject/suspend with in-flight "Rejecting…" state */}
+      <ConfirmDialog
+        open={pendingAction !== null}
+        tone={pendingAction ? CONFIG[pendingAction.action].tone : 'normal'}
+        title={
+          pendingAction
+            ? `${CONFIG[pendingAction.action].confirm} driver`
+            : ''
+        }
+        message={
+          pendingAction
+            ? `Driver ${truncateId(pendingAction.driver.id)} will be ${
+                pendingAction.action === 'suspend'
+                  ? 'suspended and can no longer accept rides'
+                  : pendingAction.action === 'activate'
+                    ? 'reinstated and marked APPROVED'
+                    : 'rejected'
+              }.`
+            : ''
+        }
+        confirmLabel={pendingAction ? CONFIG[pendingAction.action].confirm ?? 'Confirm' : 'Confirm'}
+        working={busyDriverId === (pendingAction?.driver.id ?? '')}
+        onConfirm={() => pendingAction && handleAction(pendingAction.driver, pendingAction.action)}
+        onCancel={() => setPendingAction(null)}
+      />
     </div>
   );
 }

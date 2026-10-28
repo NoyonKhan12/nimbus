@@ -48,7 +48,7 @@ public class Notification {
     @Builder.Default
     private boolean read = false;
 
-    @Column(name = "metadata", columnDefinition = "JSONB")
+    @Column(name = "metadata", columnDefinition = "text")
     private String metadata;
 
     @Column(name = "created_at", nullable = false)
@@ -64,6 +64,7 @@ public class Notification {
         RIDE_REMINDER,        // Upcoming scheduled ride
         MATCHING,             // Ride matched successfully
         BOOKING_CONFIRMED,    // Booking confirmed
+        BOOKING_CANCELLED,    // Booking cancelled
         PICKUP_REMINDER,      // Driver approaching pickup
         DRIVER_ASSIGNMENT,    // Driver assigned
         PAYMENT_RECEIVED,     // Payment processed

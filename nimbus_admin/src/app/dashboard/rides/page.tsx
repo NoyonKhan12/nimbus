@@ -1,17 +1,20 @@
 'use client';
 
+import { useRouter } from 'next/navigation';
+
 import { useEffect, useState } from 'react';
-import { FiActivity, FiSearch, FiRefreshCw, FiFilter, FiChevronLeft, FiChevronRight } from 'react-icons/fi';
+import { FiMap, FiSearch, FiRefreshCw, FiFilter, FiChevronLeft, FiChevronRight } from 'react-icons/fi';
 import { RideInfo } from '@/types';
 import { PagedResponse } from '@/types/paged';
 import { getRides } from '@/services/rides';
 import { RIDE_STATUSES } from '@/lib/constants';
-import { truncateId, formatCurrency, formatDate, getStatusLabel } from '@/lib/utils';
+import { formatCurrency, formatDate, getBadgeClass, getStatusLabel, truncateId } from '@/lib/utils';
 
 /**
  * Rides management page — list rides with status filter.
  */
 export default function RidesPage() {
+  const router = useRouter();
   const [rides, setRides] = useState<RideInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -62,7 +65,7 @@ export default function RidesPage() {
       <div className="flex justify-between items-center mb-6">
         <div className="flex items-center gap-3">
           <div className="p-2 bg-indigo-100 rounded-lg">
-            <FiActivity className="text-indigo-600 text-xl" />
+            <FiMap className="text-indigo-600 text-xl" />
           </div>
           <h1 className="text-2xl font-bold text-gray-900">Rides</h1>
         </div>
@@ -116,17 +119,16 @@ export default function RidesPage() {
                   </tr>
                 ))
               : rides.map((ride) => (
-                  <tr key={ride.id} className="border-b hover:bg-gray-50">
+                  <tr
+                    key={ride.id}
+                    onClick={() => router.push(`/dashboard/rides/${ride.id}`)}
+                    className="border-b hover:bg-gray-50 cursor-pointer"
+                  >
                     <td className="px-4 py-3 text-sm text-gray-700">{truncateId(ride.id)}</td>
                     <td className="px-4 py-3 text-sm text-gray-700">{ride.originAddress ?? '-'}</td>
                     <td className="px-4 py-3 text-sm text-gray-700">{ride.destinationAddress ?? '-'}</td>
                     <td className="px-4 py-3 text-sm">
-                      <span className={`status-badge ${
-                        ride.status === 'COMPLETED' ? 'status-completed' :
-                        ride.status === 'CANCELLED' ? 'status-cancelled' :
-                        ride.status === 'ACTIVE' ? 'status-active' :
-                        'status-pending'
-                      }`}>
+                      <span className={`status-badge ${getBadgeClass(ride.status ?? undefined)}`}>
                         {getStatusLabel(ride.status ?? '')}
                       </span>
                     </td>

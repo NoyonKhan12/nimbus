@@ -62,6 +62,8 @@ export interface DriverInfo {
   totalEarnings: number;
   dueAmount: number;
   createdAt: string;
+  driverFirstName?: string | null;
+  driverLastName?: string | null;
 }
 
 // ────────────────────────────────────────────────
@@ -113,6 +115,61 @@ export interface SettlementInfo {
   status: string;
   createdAt: string;
   paymentReference: string;
+}
+
+// ────────────────────────────────────────────────
+// Complaint Info (raw Complaint entity — relations serialize as nested objects)
+// ────────────────────────────────────────────────
+
+export interface ComplaintInfo {
+  id: string;
+  category: string;
+  description: string;
+  status: string;
+  resolution?: string | null;
+  createdAt: string;
+  updatedAt?: string;
+  bookingId?: string;
+  passengerId?: string;
+  booking?: { id?: string } | null;
+  user?: { id?: string } | null;
+}
+
+// ────────────────────────────────────────────────
+// Safety Event Info (raw SafetyEvent entity — relations serialize as nested objects)
+// ────────────────────────────────────────────────
+
+export interface SafetyEventInfo {
+  id: string;
+  eventType: string;
+  status: string;
+  description?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  vehicleId?: string | null;
+  shareToken?: string | null;
+  expiresAt?: string | null;
+  createdAt: string;
+  updatedAt?: string;
+  ride?: { id?: string } | null;
+  booking?: { id?: string } | null;
+  user?: { id?: string } | null;
+  driver?: { id?: string } | null;
+}
+
+// ────────────────────────────────────────────────
+// System Configuration Info
+// ────────────────────────────────────────────────
+
+export interface SystemConfigInfo {
+  id: string;
+  configKey: string;
+  configValue?: string | null;
+  configType: string;
+  description?: string | null;
+  encrypted?: boolean;
+  createdAt: string;
+  updatedAt: string;
 }
 
 // ────────────────────────────────────────────────

@@ -13,7 +13,9 @@ import java.util.UUID;
 @AllArgsConstructor
 public class CreateBookingRequest {
 
-    @NotNull(message = "Ride ID is required")
+    // Not @NotNull: the nested POST /rides/{rideId}/bookings takes it from
+    // the path; the flat POST /bookings requires it (enforced in the
+    // service, since bean validation runs before the controller body).
     private UUID rideId;
 
     @NotNull(message = "Seat count is required")
@@ -32,5 +34,6 @@ public class CreateBookingRequest {
     @Size(max = 500, message = "Dropoff address must not exceed 500 characters")
     private String dropoffAddress;
 
+    @NotBlank(message = "Fare quote is required")
     private String fareQuoteId;
 }

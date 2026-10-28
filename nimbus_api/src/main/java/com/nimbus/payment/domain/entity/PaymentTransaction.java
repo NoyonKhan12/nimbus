@@ -42,8 +42,15 @@ public class PaymentTransaction {
     @Column(name = "amount", precision = 18, scale = 2)
     private BigDecimal amount;
 
-    @Column(name = "raw_response", columnDefinition = "JSONB")
+    @Column(name = "raw_response", columnDefinition = "text")
     private String rawResponse;
+
+    /**
+     * Provider's own event/callback reference — unique per provider for
+     * webhook dedupe (guide §12: duplicate callbacks are harmless).
+     */
+    @Column(name = "provider_event_ref", length = 255)
+    private String providerEventRef;
 
     @Column(name = "created_at", nullable = false)
     @Builder.Default

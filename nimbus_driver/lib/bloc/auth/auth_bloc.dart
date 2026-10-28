@@ -1,6 +1,7 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:equatable/equatable.dart';
 import '../../services/auth_service.dart';
+import '../../services/websocket_service.dart';
 
 // Events
 abstract class AuthEvent extends Equatable {
@@ -67,6 +68,11 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
 
   Future<void> _onLoggedOut(AuthLoggedOut event, Emitter<AuthState> emit) async {
     await _authService.logout();
+    try {
+      WebsocketService().disconnect();
+    } catch (_) {
+      // Socket teardown must never block logout.
+    }
     emit(AuthUnauthenticated());
   }
 }

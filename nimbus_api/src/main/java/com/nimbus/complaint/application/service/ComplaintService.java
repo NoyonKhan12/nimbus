@@ -31,6 +31,8 @@ public class ComplaintService {
     private final ComplaintRepository complaintRepository;
     private final BookingRepository bookingRepository;
     private final UserRepository userRepository;
+    private final com.nimbus.audit.application.service.AuditService auditService;
+    private final com.nimbus.notification.application.service.NotificationService notificationService;
 
     /**
      * Submit a complaint.
@@ -52,6 +54,14 @@ public class ComplaintService {
         if (request.getBookingId() != null) {
             booking = bookingRepository.findById(request.getBookingId())
                     .orElseThrow(() -> new NimbusException(ErrorCode.BOOKING_NOT_FOUND, HttpStatus.NOT_FOUND));
+            boolean isPassenger = booking.getPassenger() != null
+                    && booking.getPassenger().getId().equals(userId);
+            boolean isDriver = booking.getRide() != null
+                    && booking.getRide().getCreator() != null
+                    && booking.getRide().getCreator().getId().equals(userId);
+            if (!isPassenger && !isDriver) {
+                throw new NimbusException(ErrorCode.FORBIDDEN, HttpStatus.FORBIDDEN);
+            }
         }
 
         Complaint complaint = Complaint.builder()
@@ -76,23 +86,55 @@ public class ComplaintService {
     }
 
     /**
-     * Get a specific complaint (admin/support only).
+     * Get a specific complaint. Only the complainant or staff can read it.
      */
     @Transactional(readOnly = true)
-    public Complaint getComplaint(UUID complaintId) {
-        return complaintRepository.findById(complaintId)
+    public Complaint getComplaint(UUID complaintId, UUID userId, boolean staff) {
+        Complaint complaint = complaintRepository.findById(complaintId)
                 .orElseThrow(() -> new NimbusException(ErrorCode.NOT_FOUND, HttpStatus.NOT_FOUND));
+        if (!staff && (complaint.getUser() == null
+                || !complaint.getUser().getId().equals(userId))) {
+            throw new NimbusException(ErrorCode.FORBIDDEN, HttpStatus.FORBIDDEN);
+        }
+        return complaint;
     }
 
     /**
-     * Update complaint status (admin/support only).
+     * Update complaint status (admin/support only). Every resolution change
+     * is audited (guide §19/§20) and the complainant is notified.
      */
     public void updateComplaintStatus(UUID complaintId, Complaint.ComplaintStatus status, String resolution) {
         Complaint complaint = complaintRepository.findById(complaintId)
                 .orElseThrow(() -> new NimbusException(ErrorCode.NOT_FOUND, HttpStatus.NOT_FOUND));
 
+        String oldStatus = complaint.getStatus() != null ? complaint.getStatus().name() : null;
         complaint.updateStatus(status, resolution);
         complaintRepository.save(complaint);
+
+        UUID actorId = currentUserIdOrNull();
+        auditService.logAction(actorId, "COMPLAINT_STATUS_CHANGED", "COMPLAINT", complaintId,
+                "status=" + oldStatus, "status=" + status.name());
+
+        try {
+            notificationService.sendNotification(complaint.getUser().getId(),
+                    com.nimbus.notification.domain.entity.Notification.NotificationType.COMPLAINT_STATUS,
+                    "Complaint update",
+                    "Your complaint status is now " + status.name() + ".",
+                    java.util.Map.of("complaintId", complaintId.toString(),
+                            "status", status.name()));
+        } catch (Exception e) {
+            org.slf4j.LoggerFactory.getLogger(ComplaintService.class)
+                    .warn("Complaint notification failed: {}", e.getMessage());
+        }
+    }
+
+    private UUID currentUserIdOrNull() {
+        var auth = org.springframework.security.core.context.SecurityContextHolder
+                .getContext().getAuthentication();
+        if (auth instanceof com.nimbus.kernel.infrastructure.security.UserAuthenticationToken token) {
+            return token.getUserId();
+        }
+        return null;
     }
 
     /**
@@ -101,5 +143,17 @@ public class ComplaintService {
     @Transactional(readOnly = true)
     public List<Complaint> getOpenComplaints() {
         return complaintRepository.findByStatus(Complaint.ComplaintStatus.OPEN);
+    }
+
+    /** Complaints by status (admin operations, guide §20). */
+    @Transactional(readOnly = true)
+    public List<Complaint> getComplaintsByStatus(Complaint.ComplaintStatus status) {
+        return complaintRepository.findByStatus(status);
+    }
+
+    /** All complaints (admin operations, guide §20). */
+    @Transactional(readOnly = true)
+    public List<Complaint> getAllComplaints() {
+        return complaintRepository.findAll();
     }
 }

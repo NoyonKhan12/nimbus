@@ -6,5 +6,6 @@ class StorageKeys {
   static const userId = 'user_id';
   static const userPhone = 'user_phone';
   static const userRole = 'user_role';
+  static const deviceId = 'device_id';
   static const hasCompletedOnboarding = 'has_completed_onboarding';
 }

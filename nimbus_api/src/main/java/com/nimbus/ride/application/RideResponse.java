@@ -32,6 +32,9 @@ public class RideResponse {
     private Integer maxWaitSeconds;
     private Integer routeVersion;
     private String fareRuleVersion;
+    private Ride.RecurrenceType recurrenceType;
+    private Instant recurrenceUntil;
+    private UUID parentRideId;
     private String notes;
     private Instant createdAt;
     private Instant updatedAt;

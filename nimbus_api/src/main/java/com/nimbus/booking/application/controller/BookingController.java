@@ -73,6 +73,22 @@ public class BookingController {
     }
 
     /**
+     * List bookings on a ride (driver only).
+     * GET /bookings/ride/{rideId}
+     */
+    @GetMapping("/ride/{rideId}")
+    public ResponseEntity<ApiResponse<List<BookingResponse>>> listRideBookings(
+            @PathVariable UUID rideId) {
+        UUID userId = getCurrentUserId();
+        List<BookingResponse> bookings = bookingService.listByRide(rideId, userId);
+        return ResponseEntity.ok(ApiResponse.<List<BookingResponse>>builder()
+                .success(true)
+                .data(bookings)
+                .timestamp(java.time.Instant.now().toString())
+                .build());
+    }
+
+    /**
      * Cancel a booking.
      * POST /bookings/{bookingId}/cancel
      */

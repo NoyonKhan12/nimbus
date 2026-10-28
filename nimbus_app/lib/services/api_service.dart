@@ -40,7 +40,8 @@ class ApiService {
     final dio = Dio(
       BaseOptions(
         baseUrl: AppConstants.apiBaseUrl,
-        connectTimeout: const Duration(milliseconds: ApiService._dioTimeout),
+        connectTimeout:
+            const Duration(milliseconds: ApiService._connectTimeout),
         receiveTimeout: const Duration(milliseconds: ApiService._receiveTimeout),
         sendTimeout: const Duration(milliseconds: ApiService._dioTimeout),
         contentType: 'application/json',
@@ -71,8 +72,12 @@ class ApiService {
           return handler.next(options);
         },
         onError: (DioException error, handler) async {
-          if (error.response?.statusCode == 401) {
-            // Token expired or invalid; try to refresh.
+          final status = error.response?.statusCode;
+          // The backend's JWT filter silently skips bad tokens, so Spring
+          // Security rejects expired/missing auth with 403 (empty body) —
+          // treat both 401 and 403 as "try to refresh and retry".
+          final isAuthFailure = status == 401 || status == 403;
+          if (isAuthFailure) {
             final refreshed = await _refreshToken();
             if (refreshed) {
               final request = error.requestOptions;
@@ -104,8 +109,21 @@ class ApiService {
     }
   }
 
+  /// In-flight refresh future — shared by concurrent 401 handlers so only
+  /// ONE `/auth/refresh` call happens at a time (with refresh-token
+  /// rotation, parallel refreshes would revoke each other's tokens).
+  Future<bool>? _refreshInFlight;
+
   /// Refreshes the JWT access token using the stored refresh token.
-  Future<bool> _refreshToken() async {
+  ///
+  /// Single-flight: concurrent callers await the same future.
+  Future<bool> _refreshToken() {
+    return _refreshInFlight ??= _doRefreshToken().whenComplete(() {
+      _refreshInFlight = null;
+    });
+  }
+
+  Future<bool> _doRefreshToken() async {
     try {
       final refreshToken =
           await _secureStorage.read(key: StorageKeys.refreshToken);
@@ -118,15 +136,22 @@ class ApiService {
       );
 
       if (response.statusCode == 200) {
-        final tokens = RefreshTokenResponse.fromJson(response.data);
-        await _secureStorage.write(
-          key: StorageKeys.accessToken,
-          value: tokens.accessToken,
-        );
-        await _secureStorage.write(
-          key: StorageKeys.refreshToken,
-          value: tokens.refreshToken,
-        );
+        // The backend wraps tokens in the ApiResponse envelope:
+        // `{success, data: {accessToken, refreshToken, expiresIn}, ...}`.
+        final body = response.data;
+        if (body is! Map<String, dynamic>) return false;
+        final data = body['data'];
+        if (data is! Map<String, dynamic>) return false;
+        final access = data['accessToken']?.toString();
+        final refresh = data['refreshToken']?.toString();
+        if (access == null || access.isEmpty) return false;
+        await _secureStorage.write(key: StorageKeys.accessToken, value: access);
+        if (refresh != null && refresh.isNotEmpty) {
+          await _secureStorage.write(
+            key: StorageKeys.refreshToken,
+            value: refresh,
+          );
+        }
         return true;
       }
       return false;

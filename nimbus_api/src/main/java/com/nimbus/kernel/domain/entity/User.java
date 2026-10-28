@@ -38,10 +38,14 @@ public class User {
     @Builder.Default
     private UserStatus status = UserStatus.PENDING;
 
-    @Column(length = 50, nullable = false)
-    @Enumerated(EnumType.STRING)
+    /**
+     * Role name (references the dynamic \`roles\` table). Fixed system values
+     * keep their historical names: PASSENGER, DRIVER, ADMIN, OPERATIONS,
+     * FINANCE, SUPPORT, SAFETY. Custom staff roles are managed in Settings.
+     */
+    @Column(length = 64, nullable = false)
     @Builder.Default
-    private UserRole role = UserRole.PASSENGER;
+    private String role = "PASSENGER";
 
     @Column(name = "phone_verified", nullable = false)
     @Builder.Default
@@ -60,10 +64,6 @@ public class User {
 
     public enum UserStatus {
         PENDING, ACTIVE, SUSPENDED, BANNED
-    }
-
-    public enum UserRole {
-        PASSENGER, DRIVER, ADMIN, OPERATIONS, FINANCE, SUPPORT, SAFETY
     }
 
     public boolean isActive() {

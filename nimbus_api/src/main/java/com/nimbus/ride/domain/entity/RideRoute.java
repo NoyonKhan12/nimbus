@@ -43,7 +43,7 @@ public class RideRoute {
     @Column(name = "polyline", columnDefinition = "TEXT")
     private String polyline;
 
-    @Column(name = "geometry", columnDefinition = "GEOMETRY(LineString, 4326)")
+    @Column(name = "geometry", columnDefinition = "text")
     private String geometry;
 
     @Column(name = "distance_meters")

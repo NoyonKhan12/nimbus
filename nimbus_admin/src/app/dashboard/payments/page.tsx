@@ -1,17 +1,21 @@
 'use client';
 
+import { useRouter } from 'next/navigation';
+
 import { useEffect, useState } from 'react';
 import { FiCreditCard, FiRefreshCw, FiFilter, FiChevronLeft, FiChevronRight, FiGift } from 'react-icons/fi';
 import { PaymentInfo } from '@/types';
 import { PagedResponse } from '@/types/paged';
 import { getPayments, refundPayment } from '@/services/payments';
 import { PAYMENT_STATUSES } from '@/lib/constants';
-import { truncateId, formatCurrency, formatDate, getStatusLabel } from '@/lib/utils';
+import { formatCurrency, formatDate, getBadgeClass, getStatusLabel, truncateId } from '@/lib/utils';
+import { useToast, ConfirmDialog } from '@/components/toast';
 
 /**
  * Payments management page — list payments with status filter and refund action.
  */
 export default function PaymentsPage() {
+  const router = useRouter();
   const [payments, setPayments] = useState<PaymentInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -23,6 +27,7 @@ export default function PaymentsPage() {
 
   const [statusFilter, setStatusFilter] = useState<string>('');
   const [currentPage, setCurrentPage] = useState(0);
+  const { toast } = useToast();
 
   useEffect(() => {
     loadPayments();
@@ -51,16 +56,29 @@ export default function PaymentsPage() {
     }
   };
 
-  const handleRefund = async (payment: PaymentInfo) => {
-    const confirmed = confirm(
-      `Refund payment of ${formatCurrency(payment.amount ?? 0)}?`,
-    );
-    if (!confirmed) return;
+  const [refundTarget, setRefundTarget] = useState<PaymentInfo | null>(null);
+  const [busyPaymentId, setBusyPaymentId] = useState<string | null>(null);
+
+  const handleRefund = (payment: PaymentInfo) => {
+    // Opens the confirmation modal (previously browser confirm()).
+    setRefundTarget(payment);
+  };
+
+  const confirmRefund = async () => {
+    if (!refundTarget) return;
     try {
-      await refundPayment(payment.id, payment.amount ?? 0);
+      setBusyPaymentId(refundTarget.id);
+      await refundPayment(refundTarget.id, refundTarget.amount ?? 0);
+      toast('success', 'Refund issued',
+        `${formatCurrency(refundTarget.amount ?? 0)} refunded for payment ${truncateId(refundTarget.id)}.`);
+      setRefundTarget(null);
       loadPayments();
-    } catch (err) {
-      alert('Failed to refund payment');
+    } catch (err: unknown) {
+      toast('error', 'Refund failed',
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (err as any)?.response?.data?.message || `Failed to refund payment ${truncateId(refundTarget.id)}`);
+    } finally {
+      setBusyPaymentId(null);
     }
   };
 
@@ -135,19 +153,22 @@ export default function PaymentsPage() {
                   </tr>
                 ))
               : payments.map((payment) => (
-                  <tr key={payment.id} className="border-b hover:bg-gray-50">
+                  <tr
+                    key={payment.id}
+                    onClick={() => router.push(`/dashboard/payments/${payment.id}`)}
+                    className="border-b hover:bg-gray-50 cursor-pointer"
+                  >
                     <td className="px-4 py-3 text-sm text-gray-700">{truncateId(payment.id)}</td>
                     <td className="px-4 py-3 text-sm text-gray-700">{truncateId(payment.userId)}</td>
                     <td className="px-4 py-3 text-sm text-gray-700">{truncateId(payment.bookingId)}</td>
                     <td className="px-4 py-3 text-sm text-gray-700">{formatCurrency(payment.amount ?? 0)}</td>
-                    <td className="px-4 py-3 text-sm text-gray-700">{payment.paymentMethod ?? '-'}</td>
                     <td className="px-4 py-3 text-sm">
-                      <span className={`status-badge ${
-                        payment.status === 'COMPLETED' ? 'status-completed' :
-                        payment.status === 'FAILED' ? 'status-cancelled' :
-                        payment.status === 'REFUNDED' ? 'status-cancelled' :
-                        'status-pending'
-                      }`}>
+                      <span className={`status-badge ${getBadgeClass(payment.paymentMethod ?? undefined)}`}>
+                        {getStatusLabel(payment.paymentMethod ?? '')}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-sm">
+                      <span className={`status-badge ${getBadgeClass(payment.status ?? undefined)}`}>
                         {getStatusLabel(payment.status ?? '')}
                       </span>
                     </td>
@@ -155,7 +176,7 @@ export default function PaymentsPage() {
                     <td className="px-4 py-3">
                       {payment.status === 'COMPLETED' && payment.paymentMethod === 'CARD' && (
                         <button
-                          onClick={() => handleRefund(payment)}
+                          onClick={(e) => { e.stopPropagation(); handleRefund(payment); }}
                           className="text-xs px-2 py-1 bg-rose-100 text-rose-700 rounded hover:bg-rose-200 flex items-center gap-1"
                         >
                           <FiGift className="text-xs" />
@@ -195,6 +216,22 @@ export default function PaymentsPage() {
           </div>
         </div>
       )}
+
+      {/* Refund confirmation + in-flight modal */}
+      <ConfirmDialog
+        open={refundTarget !== null}
+        tone="danger"
+        title="Refund payment"
+        message={
+          refundTarget
+            ? `Provider payment ${truncateId(refundTarget.id)} will be refunded to the passenger for ${formatCurrency(refundTarget.amount ?? 0)}. Ledger entries are posted automatically.`
+            : ''
+        }
+        confirmLabel="Refund"
+        working={busyPaymentId === (refundTarget?.id ?? '')}
+        onConfirm={confirmRefund}
+        onCancel={() => setRefundTarget(null)}
+      />
     </div>
   );
 }

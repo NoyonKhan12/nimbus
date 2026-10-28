@@ -57,11 +57,22 @@ export const rejectDriver = async (
 };
 
 /**
- * Update a driver's status (suspend/activate).
+ * Update a driver's live status (OFFLINE / ONLINE / DRIVING / AWAY).
  */
 export const updateDriverStatus = async (
   id: string,
   status: string,
 ): Promise<void> => {
   await api.patch(`/admin/drivers/${id}/status`, { status });
+};
+
+/**
+ * Set approval lifecycle status — suspend / reinstate an approved driver.
+ * Backend: PATCH /admin/drivers/{id}/approval body: {"status": "SUSPENDED"}.
+ */
+export const setDriverApproval = async (
+  id: string,
+  status: 'APPROVED' | 'SUSPENDED',
+): Promise<void> => {
+  await api.patch(`/admin/drivers/${id}/approval`, { status });
 };

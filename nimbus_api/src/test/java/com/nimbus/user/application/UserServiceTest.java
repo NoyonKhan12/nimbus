@@ -25,6 +25,8 @@ class UserServiceTest {
     @Mock private UserRepository userRepository;
     @Mock private UserProfileRepository userProfileRepository;
     @Mock private SavedLocationRepository savedLocationRepository;
+    @Mock private com.nimbus.booking.domain.repository.BookingRepository bookingRepository;
+    @Mock private com.nimbus.ride.domain.repository.RideRepository rideRepository;
 
     private UserService userService;
 
@@ -35,7 +37,8 @@ class UserServiceTest {
 
     @BeforeEach
     void setUp() {
-        userService = new UserService(userRepository, userProfileRepository, savedLocationRepository);
+        userService = new UserService(userRepository, userProfileRepository, savedLocationRepository,
+                bookingRepository, rideRepository);
     }
 
     private void setUpSecurityContext(User user) {
@@ -48,7 +51,7 @@ class UserServiceTest {
         User user = User.builder()
                 .id(UUID.randomUUID())
                 .phone("+8801712345678")
-                .role(User.UserRole.PASSENGER)
+                .role("PASSENGER")
                 .status(User.UserStatus.ACTIVE)
                 .build();
         setUpSecurityContext(user);
@@ -90,7 +93,7 @@ class UserServiceTest {
         User user = User.builder()
                 .id(UUID.randomUUID())
                 .phone("+8801712345678")
-                .role(User.UserRole.PASSENGER)
+                .role("PASSENGER")
                 .status(User.UserStatus.ACTIVE)
                 .build();
         setUpSecurityContext(user);
@@ -114,7 +117,7 @@ class UserServiceTest {
         User user = User.builder()
                 .id(UUID.randomUUID())
                 .phone("+8801712345678")
-                .role(User.UserRole.PASSENGER)
+                .role("PASSENGER")
                 .status(User.UserStatus.ACTIVE)
                 .build();
         setUpSecurityContext(user);
@@ -133,7 +136,7 @@ class UserServiceTest {
         User user = User.builder()
                 .id(UUID.randomUUID())
                 .phone("+8801712345678")
-                .role(User.UserRole.PASSENGER)
+                .role("PASSENGER")
                 .status(User.UserStatus.ACTIVE)
                 .build();
         setUpSecurityContext(user);

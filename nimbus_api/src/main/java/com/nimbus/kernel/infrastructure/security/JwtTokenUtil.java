@@ -50,7 +50,7 @@ public class JwtTokenUtil {
         Date expiryDate = new Date(now.getTime() + expiration);
 
         Map<String, Object> claims = new HashMap<>();
-        claims.put("role", user.getRole().name());
+        claims.put("role", user.getRole());
         claims.put("phone_verified", user.isPhoneVerified());
         claims.put("type", "access");
 
@@ -67,11 +67,23 @@ public class JwtTokenUtil {
      * Generate refresh token for a user.
      */
     public String generateRefreshToken(User user) {
+        return generateRefreshToken(user, null);
+    }
+
+    /**
+     * Generate refresh token bound to a refresh session (guide §14/§18).
+     * The session id claim lets AuthService rotate/revoke the server-side
+     * session; null sessionId produces a legacy session-less token.
+     */
+    public String generateRefreshToken(User user, String sessionId) {
         Date now = new Date();
         Date expiryDate = new Date(now.getTime() + refreshTokenExpirationMs);
 
         Map<String, Object> claims = new HashMap<>();
         claims.put("type", "refresh");
+        if (sessionId != null) {
+            claims.put("sid", sessionId);
+        }
 
         return Jwts.builder()
                 .setClaims(claims)
@@ -80,6 +92,17 @@ public class JwtTokenUtil {
                 .setExpiration(expiryDate)
                 .signWith(secretKey)
                 .compact();
+    }
+
+    /**
+     * Extract the refresh session id claim, or null for legacy tokens.
+     */
+    public String getSessionIdFromToken(String token) {
+        try {
+            return getClaimFromToken(token, claims -> claims.get("sid", String.class));
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     /**

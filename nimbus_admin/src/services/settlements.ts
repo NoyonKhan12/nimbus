@@ -40,3 +40,14 @@ export const getSettlementById = async (
   const wrapped = response.data;
   return (wrapped.data ?? wrapped) as SettlementInfo;
 };
+
+/**
+ * Settle (pay out) a PENDING settlement — posts the ledger entry, marks
+ * PAID and clears the driver's due.
+ * Backend: POST /admin/settlements/{id}/settle → ApiResponse<SettlementResponse>
+ */
+export const settleSettlement = async (id: string): Promise<SettlementInfo> => {
+  const response = await api.post(`/admin/settlements/${id}/settle`);
+  const wrapped = response.data; // ApiResponse wrapper
+  return (wrapped.data ?? wrapped) as SettlementInfo;
+};

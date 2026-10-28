@@ -1,37 +1,54 @@
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
 import '../core/constants/app_constants.dart';
 import '../core/constants/storage_keys.dart';
-import '../dto/auth_dtos.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import '../network/backend_api.dart';
 
 /// Centralized API service using Dio with JWT authentication.
+/// Handles token storage, single-flight refresh, and interceptor logic.
 class ApiService {
   final Dio _dio;
   final FlutterSecureStorage _secureStorage;
 
-  static ApiService? _instance;
+  static const _dioTimeout = 30000;
+  static const _receiveTimeout = 30000;
+  static const _connectTimeout = 15000;
 
   ApiService._(this._dio, this._secureStorage);
 
+  static ApiService? _instance;
+
   factory ApiService() {
-    _instance ??= _init();
+    if (_instance == null) {
+      throw StateError(
+          'ApiService not initialized. Call ApiService.init() first.');
+    }
     return _instance!;
   }
 
-  static Future<ApiService> _init() async {
+  static Future<void> init() async {
+    if (_instance != null) return;
+    _instance = await _create();
+  }
+
+  static Future<ApiService> _create() async {
     final dio = Dio(
       BaseOptions(
         baseUrl: AppConstants.apiBaseUrl,
-        connectTimeout: const Duration(milliseconds: 15000),
-        receiveTimeout: const Duration(milliseconds: 30000),
+        connectTimeout:
+            const Duration(milliseconds: ApiService._connectTimeout),
+        receiveTimeout:
+            const Duration(milliseconds: ApiService._receiveTimeout),
+        sendTimeout: const Duration(milliseconds: ApiService._dioTimeout),
         contentType: 'application/json',
         responseType: ResponseType.json,
       ),
     );
 
-    final secureStorage = const FlutterSecureStorage();
-    final service = ApiService._(dio, secureStorage);
+    final service = ApiService._(dio, const FlutterSecureStorage());
     service._setupInterceptors();
     return service;
   }
@@ -47,7 +64,12 @@ class ApiService {
           return handler.next(options);
         },
         onError: (DioException error, handler) async {
-          if (error.response?.statusCode == 401) {
+          final status = error.response?.statusCode;
+          // The backend's JWT filter silently skips bad tokens, so Spring
+          // Security rejects expired/missing auth with 403 (empty body) —
+          // treat both 401 and 403 as "try to refresh and retry".
+          final isAuthFailure = status == 401 || status == 403;
+          if (isAuthFailure) {
             final refreshed = await _refreshToken();
             if (refreshed) {
               final request = error.requestOptions;
@@ -66,15 +88,26 @@ class ApiService {
     );
 
     if (kDebugMode) {
-      _dio.interceptors.add(LogInterceptor(
-        requestBody: true,
-        responseBody: true,
-        logPrint: (obj) => debugPrint(obj.toString()),
-      ));
+      _dio.interceptors.add(
+        LogInterceptor(
+          requestBody: false,
+          responseBody: true,
+          logPrint: (obj) => debugPrint(obj.toString()),
+        ),
+      );
     }
   }
 
-  Future<bool> _refreshToken() async {
+  Future<bool>? _refreshInFlight;
+
+  /// Single-flight refresh — concurrent 401/403 handlers share one call.
+  Future<bool> _refreshToken() {
+    return _refreshInFlight ??= _doRefreshToken().whenComplete(() {
+      _refreshInFlight = null;
+    });
+  }
+
+  Future<bool> _doRefreshToken() async {
     try {
       final refreshToken =
           await _secureStorage.read(key: StorageKeys.refreshToken);
@@ -86,15 +119,18 @@ class ApiService {
         options: Options(headers: {'Authorization': null}),
       );
 
-      if (response.statusCode == 200) {
-        final tokens = RefreshTokenResponse.fromJson(response.data);
-        await _secureStorage.write(
-            key: StorageKeys.accessToken, value: tokens.accessToken);
-        await _secureStorage.write(
-            key: StorageKeys.refreshToken, value: tokens.refreshToken);
-        return true;
+      final body = response.data;
+      if (body is! Map<String, dynamic>) return false;
+      final data = body['data'];
+      if (data is! Map<String, dynamic>) return false;
+      final access = data['accessToken']?.toString();
+      final refresh = data['refreshToken']?.toString();
+      if (access == null || access.isEmpty) return false;
+      await _secureStorage.write(key: StorageKeys.accessToken, value: access);
+      if (refresh != null && refresh.isNotEmpty) {
+        await _secureStorage.write(key: StorageKeys.refreshToken, value: refresh);
       }
-      return false;
+      return true;
     } catch (e) {
       return false;
     }
@@ -104,18 +140,18 @@ class ApiService {
     await _secureStorage.delete(key: StorageKeys.accessToken);
     await _secureStorage.delete(key: StorageKeys.refreshToken);
     await _secureStorage.delete(key: StorageKeys.userId);
-    await _secureStorage.delete(key: StorageKeys.sessionId);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.clear();
   }
 
-  Future<void> storeTokens(AuthTokens tokens) async {
+  /// Stores auth tokens after successful OTP verification.
+  Future<void> storeTokens({
+    required String accessToken,
+    required String refreshToken,
+  }) async {
+    await _secureStorage.write(key: StorageKeys.accessToken, value: accessToken);
     await _secureStorage.write(
-        key: StorageKeys.accessToken, value: tokens.accessToken);
-    await _secureStorage.write(
-        key: StorageKeys.refreshToken, value: tokens.refreshToken);
-    if (tokens.sessionId != null) {
-      await _secureStorage.write(
-          key: StorageKeys.sessionId, value: tokens.sessionId);
-    }
+        key: StorageKeys.refreshToken, value: refreshToken);
   }
 
   Future<String?> getAccessToken() =>
@@ -126,15 +162,12 @@ class ApiService {
     return token != null && token.isNotEmpty;
   }
 
+  /// Logs out — best-effort server call, then clears local tokens.
   Future<void> logout() async {
     try {
-      final refreshToken =
-          await _secureStorage.read(key: StorageKeys.refreshToken);
-      if (refreshToken != null) {
-        await _dio.post('/auth/logout', data: {'refreshToken': refreshToken});
-      }
-    } catch (e) {
-      // Best-effort.
+      await BackendApi(_dio).post('/auth/logout');
+    } catch (_) {
+      // JWTs are stateless; local clearing is what matters.
     }
     await _clearTokens();
   }

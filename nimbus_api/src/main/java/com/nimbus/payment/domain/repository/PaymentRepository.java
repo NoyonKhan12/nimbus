@@ -15,6 +15,8 @@ import java.util.*;
 @Repository
 public interface PaymentRepository extends JpaRepository<Payment, UUID> {
     Optional<Payment> findByBookingId(UUID bookingId);
+    Optional<Payment> findFirstByBookingIdAndStatusOrderByCreatedAtDesc(
+            UUID bookingId, Payment.PaymentStatus status);
     Optional<Payment> findByIdempotencyKey(String idempotencyKey);
     List<Payment> findByStatus(Payment.PaymentStatus status);
     Page<Payment> findByStatus(Payment.PaymentStatus status, Pageable pageable);

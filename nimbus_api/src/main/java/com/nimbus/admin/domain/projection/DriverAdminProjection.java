@@ -19,6 +19,8 @@ public record DriverAdminProjection(
     Integer totalRides,
     BigDecimal totalEarnings,
     BigDecimal dueAmount,
-    Instant createdAt
+    Instant createdAt,
+    String driverFirstName,
+    String driverLastName
 ) {
 }

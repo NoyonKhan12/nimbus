@@ -2,6 +2,7 @@ package com.nimbus.ride.domain.repository;
 
 import com.nimbus.ride.domain.entity.RideStop;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -15,6 +16,10 @@ import java.util.*;
 public interface RideStopRepository extends JpaRepository<RideStop, UUID> {
 
     List<RideStop> findByRideIdOrderBySequence(UUID rideId);
+
+    /** Removes all stops for a ride (route rebuilds start from scratch). */
+    @Modifying
+    void deleteByRideId(UUID rideId);
 
     Optional<RideStop> findByRideIdAndSequence(UUID rideId, Integer sequence);
 

@@ -44,6 +44,12 @@ public class CreateRideRequest {
     @PositiveOrZero(message = "Max wait must be non-negative")
     private Integer maxWaitSeconds;
 
+    /** DAILY or WEEKLY when rideType is RECURRING. */
+    private String recurrenceType;
+
+    /** Recurring instances stop being created after this instant. */
+    private Instant recurrenceUntil;
+
     @Size(max = 1000, message = "Notes must not exceed 1000 characters")
     private String notes;
 }

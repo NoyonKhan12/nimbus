@@ -17,6 +17,10 @@ public class FareQuoteResponse {
     private UUID bookingId;
     private String fareRuleVersion;
     private int routeVersion;
+    private Double pickupLatitude;
+    private Double pickupLongitude;
+    private Double dropoffLatitude;
+    private Double dropoffLongitude;
     private int distanceMeters;
     private int durationSeconds;
     private BigDecimal baseFare;

@@ -1,79 +1,127 @@
-import '../api/api_client.dart';
-import '../dto/driver_dtos.dart';
-import '../dto/ride_dtos.dart';
-import '../dto/location_dto.dart';
-import '../dto/payment_dtos.dart';
+import 'dart:io';
 
-/// Service for driver-specific operations.
+import 'package:dio/dio.dart';
+
+import '../network/backend_api.dart';
+import '../network/backend_mapper.dart';
+
+/// Driver profile, onboarding, vehicles and documents.
 class DriverService {
-  final ApiClient _apiClient;
+  final BackendApi _api;
 
-  DriverService(this._apiClient);
+  DriverService(this._api);
 
-  // ===== Driver Profile =====
-  Future<DriverProfile> getProfile() => _apiClient.getDriverProfile();
+  /// Applies as a driver — license details plus the first vehicle
+  /// (backend `DriverApplicationRequest` bundles both).
+  Future<DriverProfile> apply({
+    required String licenseNumber,
+    DateTime? licenseExpiry,
+    required String vehicleRegistrationNumber,
+    required String vehicleType,
+    required String vehicleModel,
+    int? vehicleYear,
+    String? vehicleColor,
+    required int seatCapacity,
+  }) async {
+    final body = await _api.post('/drivers/apply', body: {
+      'licenseNumber': licenseNumber,
+      if (licenseExpiry != null)
+        'licenseExpiry': licenseExpiry.toUtc().toIso8601String(),
+      'vehicleRegistrationNumber': vehicleRegistrationNumber,
+      'vehicleType': vehicleType,
+      'vehicleModel': vehicleModel,
+      if (vehicleYear != null) 'vehicleYear': vehicleYear,
+      if (vehicleColor != null && vehicleColor.isNotEmpty)
+        'vehicleColor': vehicleColor,
+      'seatCapacity': seatCapacity,
+    });
+    return DriverProfile.fromJson(body.dataMap);
+  }
 
-  Future<DriverEligibility> getEligibility() => _apiClient.getDriverEligibility();
+  /// Fetches the driver profile. Returns null when the user has not
+  /// applied yet (backend 404s).
+  Future<DriverProfile?> getProfile() async {
+    try {
+      final body = await _api.get('/drivers/profile');
+      return DriverProfile.fromJson(body.dataMap);
+    } on ApiException catch (e) {
+      if (e.statusCode == 404) return null;
+      rethrow;
+    }
+  }
 
-  Future<List<DriverDocument>> getDocuments() => _apiClient.getDocuments();
+  /// Whether the driver may create/publish rides.
+  Future<bool> isEligible() async {
+    final body = await _api.get('/drivers/eligibility');
+    return body.data == true;
+  }
 
-  Future<DriverDocument> addDocument(DriverDocumentRequest request) =>
-      _apiClient.addDocument(request);
+  Future<List<Vehicle>> getVehicles() async {
+    final body = await _api.get('/drivers/vehicles');
+    return body.dataList
+        .whereType<Map<String, dynamic>>()
+        .map(Vehicle.fromJson)
+        .toList();
+  }
 
-  Future<DriverEarnings> getEarnings() => _apiClient.getEarnings();
+  Future<List<DriverDocument>> getDocuments() async {
+    final body = await _api.get('/drivers/documents');
+    return body.dataList
+        .whereType<Map<String, dynamic>>()
+        .map(DriverDocument.fromJson)
+        .toList();
+  }
 
-  Future<List<DriverSettlement>> getSettlements() =>
-      _apiClient.getSettlements();
+  /// Uploads a document image/PDF from the device with its metadata.
+  ///
+  /// The backend validates the file signature and size, stores it outside
+  /// the web root, and returns an ownership-checked download URL.
+  Future<DriverDocument> uploadDocument({
+    required String filePath,
+    required String documentType,
+    required String documentNumber,
+    DateTime? expiresAt,
+    void Function(int sent, int total)? onProgress,
+  }) async {
+    final file = File(filePath);
+    if (!await file.exists()) {
+      throw const ApiException(
+        code: 'FILE_NOT_FOUND',
+        message: 'The selected file is no longer available.',
+      );
+    }
+    final form = FormData.fromMap({
+      'type': documentType,
+      'documentNumber': documentNumber,
+      if (expiresAt != null)
+        'expiresAt': expiresAt.toUtc().toIso8601String(),
+      'file': await MultipartFile.fromFile(
+        filePath,
+        filename: file.uri.pathSegments.last,
+      ),
+    });
+    final body = await _api.postMultipart(
+      '/drivers/documents/upload',
+      formData: form,
+      onSendProgress: onProgress,
+    );
+    return DriverDocument.fromJson(body.dataMap);
+  }
 
-  Future<DriverStatusResponse> getStatus() => _apiClient.getDriverStatus();
-
-  Future<DriverStatusResponse> updateStatus(UpdateDriverStatusRequest request) =>
-      _apiClient.updateDriverStatus(request);
-
-  // ===== Location =====
-  Future<void> updateLocation({
-    required String rideId,
-    required LocationDto location,
-    double? heading,
-    double? speed,
-  }) =>
-      _apiClient.updateDriverLocation(DriverLocationUpdate(
-        rideId: rideId,
-        location: location,
-        heading: heading,
-        speed: speed,
-      ));
-
-  // ===== Rides =====
-  Future<List<Ride>> getAssignedRides({
-    int page = 0,
-    int size = 20,
-    String? status,
-  }) =>
-      _apiClient.getAssignedRides({
-        'page': page,
-        'size': size,
-        if (status != null) 'status': status,
-      });
-
-  Future<Ride> getRide(String rideId) => _apiClient.getRide(rideId);
-
-  Future<Ride> startRide(String rideId) => _apiClient.startRide(rideId);
-
-  Future<Ride> lockRoute(String rideId) => _apiClient.lockRoute(rideId);
-
-  Future<Ride> completeRide(String rideId) => _apiClient.completeRide(rideId);
-
-  Future<EtaResponse> getEta(String rideId) => _apiClient.getEta(rideId);
-
-  // ===== Bookings =====
-  Future<void> confirmPickup(String rideId, String bookingId) =>
-      _apiClient.confirmPickup(rideId, bookingId);
-
-  Future<void> confirmDropoff(String rideId, String bookingId) =>
-      _apiClient.confirmDropoff(rideId, bookingId);
-
-  // ===== Payments =====
-  Future<Payment> getPaymentForBooking(String bookingId) =>
-      _apiClient.getPaymentForBooking(bookingId);
+  /// Registers document metadata without a file (legacy clients).
+  Future<DriverDocument> addDocument({
+    required String documentType,
+    required String documentNumber,
+    String? documentUrl,
+    DateTime? expiresAt,
+  }) async {
+    final body = await _api.post('/drivers/documents', query: {
+      'type': documentType,
+      'documentNumber': documentNumber,
+      if (documentUrl != null && documentUrl.isNotEmpty)
+        'documentUrl': documentUrl,
+      if (expiresAt != null) 'expiresAt': expiresAt.toUtc().toIso8601String(),
+    });
+    return DriverDocument.fromJson(body.dataMap);
+  }
 }
